@@ -268,11 +268,64 @@ def collate_fn(batch):
         }
 
 
+def load_encoders_only(config):
+    base_model_path = config['Model']['base_model_path']
+    trust_remote_code = config['Model'].get('trust_remote_code', True)
+    model_index_path = os.path.join(base_model_path, "model_index.json")
+    is_diffusers_format = os.path.exists(model_index_path)
+
+    mixed_precision = config['Model'].get('mixed_precision', 'no')
+    if mixed_precision == 'bf16':
+        model_dtype = torch.bfloat16
+    elif mixed_precision == 'fp16':
+        model_dtype = torch.float16
+    else:
+        model_dtype = torch.float32
+
+    logger.info("Loading encoders only (VAE, text_encoder, CLIP) for cache generation...")
+
+    if is_diffusers_format:
+        text_encoder_path = os.path.join(base_model_path, "text_encoder")
+        text_encoder = AutoModel.from_pretrained(text_encoder_path, torch_dtype=model_dtype, trust_remote_code=trust_remote_code)
+        tokenizer = AutoTokenizer.from_pretrained(text_encoder_path, trust_remote_code=trust_remote_code)
+        tokenizer.padding_side = "right"
+
+        clip_model_path = os.path.join(base_model_path, "clip_model")
+        clip_model = AutoModel.from_pretrained(clip_model_path, torch_dtype=model_dtype, trust_remote_code=True)
+        clip_tokenizer = AutoTokenizer.from_pretrained(clip_model_path, trust_remote_code=True)
+
+        vae_path = os.path.join(base_model_path, "vae")
+        vae = AutoencoderKL.from_pretrained(
+            vae_path if os.path.exists(vae_path) else "stabilityai/sdxl-vae",
+            torch_dtype=torch.float32,
+            trust_remote_code=trust_remote_code
+        )
+    else:
+        gemma_path = config['Model'].get('gemma_model_path', 'google/gemma-3-4b-it')
+        clip_path = config['Model'].get('clip_model_path', 'jinaai/jina-clip-v2')
+
+        text_encoder = AutoModel.from_pretrained(gemma_path, torch_dtype=model_dtype, trust_remote_code=trust_remote_code)
+        tokenizer = AutoTokenizer.from_pretrained(gemma_path, trust_remote_code=trust_remote_code)
+        tokenizer.padding_side = "right"
+
+        clip_model = AutoModel.from_pretrained(clip_path, torch_dtype=model_dtype, trust_remote_code=True)
+        clip_tokenizer = AutoTokenizer.from_pretrained(clip_path, trust_remote_code=True)
+
+        vae_path = config['Model'].get('vae_path', 'stabilityai/sdxl-vae')
+        vae = AutoencoderKL.from_pretrained(vae_path, torch_dtype=torch.float32, trust_remote_code=trust_remote_code)
+
+    vae.eval()
+    vae.requires_grad_(False)
+    text_encoder.eval()
+    text_encoder.requires_grad_(False)
+    clip_model.eval()
+    clip_model.requires_grad_(False)
+
+    logger.info("Encoders loaded successfully")
+    return vae, text_encoder, tokenizer, clip_model, clip_tokenizer
+
+
 def load_model_and_tokenizer(config):
-    """
-    加载模型和分词器
-    支持两种模式：1) Diffusers格式自动检测 2) 分别指定路径
-    """
     base_model_path = config['Model']['base_model_path']
     trust_remote_code = config['Model'].get('trust_remote_code', True)
     model_index_path = os.path.join(base_model_path, "model_index.json")
@@ -326,6 +379,11 @@ def load_model_and_tokenizer(config):
             if unexpected_keys:
                 logger.warning(f"Unexpected keys: {len(unexpected_keys)}")
 
+        # Convert model to target dtype
+        if model_dtype != torch.float32:
+            model = model.to(dtype=model_dtype)
+            logger.info(f"Model converted to {model_dtype}")
+
         vae_path = os.path.join(base_model_path, "vae")
         vae = AutoencoderKL.from_pretrained(
             vae_path if os.path.exists(vae_path) else "stabilityai/sdxl-vae",
@@ -356,6 +414,11 @@ def load_model_and_tokenizer(config):
         if transformer_path and os.path.exists(transformer_path):
             state_dict = load_file(transformer_path) if transformer_path.endswith('.safetensors') else torch.load(transformer_path, map_location='cpu')
             model.load_state_dict(state_dict, strict=False)
+
+        # Convert model to target dtype
+        if model_dtype != torch.float32:
+            model = model.to(dtype=model_dtype)
+            logger.info(f"Model converted to {model_dtype}")
 
         vae_path = config['Model'].get('vae_path', 'stabilityai/sdxl-vae')
         vae = AutoencoderKL.from_pretrained(vae_path, torch_dtype=torch.float32, trust_remote_code=trust_remote_code)
@@ -576,10 +639,94 @@ def main():
     if not config['Optimization'].get('use_flash_attention_2', False):
         torch.backends.cuda.sdp_kernel(enable_flash=False, enable_math=True, enable_mem_efficient=False)
 
-    model, vae, text_encoder, tokenizer, clip_model, clip_tokenizer = load_model_and_tokenizer(config)
+    use_cache = config['Model'].get('use_cache', True)
+    mixed_precision = config['Model'].get('mixed_precision', 'no')
+    cache_dtype = torch.bfloat16 if mixed_precision == 'bf16' else (torch.float16 if mixed_precision == 'fp16' else torch.float32)
+    gemma3_prompt = config['Model'].get('gemma3_prompt', '')
+    resolution = config['Model']['resolution']
+
+    if use_cache:
+        logger.info("Checking if cache files exist...")
+        train_data_dir = config['Model']['train_data_dir']
+        image_paths = []
+        for root, _, files in os.walk(train_data_dir):
+            for file in files:
+                if file.lower().endswith(('.jpg', '.jpeg', '.png', '.webp')):
+                    image_paths.append(os.path.join(root, file))
+
+        cache_complete = True
+        for image_path in image_paths:
+            vae_cache = f"{image_path}.safetensors"
+            text_cache = f"{os.path.splitext(image_path)[0]}.txt.safetensors"
+            if not os.path.exists(vae_cache) or not os.path.exists(text_cache):
+                cache_complete = False
+                break
+
+        if cache_complete:
+            logger.info("Cache complete, skipping encoder loading")
+            vae = text_encoder = tokenizer = clip_model = clip_tokenizer = None
+        else:
+            logger.info("Cache incomplete, loading encoders for generation...")
+            vae, text_encoder, tokenizer, clip_model, clip_tokenizer = load_encoders_only(config)
+
+            dataset = ImageCaptionDataset(
+                train_data_dir=train_data_dir,
+                resolution=resolution,
+                enable_bucket=config['Model'].get('enable_bucket', True),
+                use_cache=True,
+                vae=vae,
+                text_encoder=text_encoder,
+                tokenizer=tokenizer,
+                clip_model=clip_model,
+                clip_tokenizer=clip_tokenizer,
+                device=accelerator.device,
+                dtype=cache_dtype,
+                gemma3_prompt=gemma3_prompt,
+            )
+
+            logger.info("Cache generated, freeing encoders from GPU")
+            del vae, text_encoder, clip_model
+            import gc
+            gc.collect()
+            torch.cuda.empty_cache()
+            vae = text_encoder = tokenizer = clip_model = clip_tokenizer = None
+
+        logger.info("Loading NextDiT model for training...")
+        model, _, _, _, _, _ = load_model_and_tokenizer(config)
+
+        dataset = ImageCaptionDataset(
+            train_data_dir=train_data_dir,
+            resolution=resolution,
+            enable_bucket=config['Model'].get('enable_bucket', True),
+            use_cache=True,
+            vae=None,
+            text_encoder=None,
+            tokenizer=None,
+            clip_model=None,
+            clip_tokenizer=None,
+            device=accelerator.device,
+            dtype=cache_dtype,
+            gemma3_prompt=gemma3_prompt,
+        )
+    else:
+        model, vae, text_encoder, tokenizer, clip_model, clip_tokenizer = load_model_and_tokenizer(config)
+
+        dataset = ImageCaptionDataset(
+            train_data_dir=config['Model']['train_data_dir'],
+            resolution=resolution,
+            enable_bucket=config['Model'].get('enable_bucket', True),
+            use_cache=False,
+            vae=None,
+            text_encoder=None,
+            tokenizer=None,
+            clip_model=None,
+            clip_tokenizer=None,
+            device=accelerator.device,
+            dtype=cache_dtype,
+            gemma3_prompt=gemma3_prompt,
+        )
 
     # 创建 Rectified Flow transport
-    resolution = config['Model']['resolution']
     seq_len = (resolution // 16) ** 2
     transport = create_transport(
         path_type="Linear",
@@ -595,34 +742,6 @@ def main():
     if config['Model'].get('gradient_checkpointing', True):
         model.gradient_checkpointing_enable()
         logger.info("Gradient checkpointing enabled")
-
-    use_cache = config['Model'].get('use_cache', True)
-    mixed_precision = config['Model'].get('mixed_precision', 'no')
-    cache_dtype = torch.bfloat16 if mixed_precision == 'bf16' else (torch.float16 if mixed_precision == 'fp16' else torch.float32)
-    gemma3_prompt = config['Model'].get('gemma3_prompt', '')
-
-    dataset = ImageCaptionDataset(
-        train_data_dir=config['Model']['train_data_dir'],
-        resolution=resolution,
-        enable_bucket=config['Model'].get('enable_bucket', True),
-        use_cache=use_cache,
-        vae=vae if use_cache else None,
-        text_encoder=text_encoder if use_cache else None,
-        tokenizer=tokenizer if use_cache else None,
-        clip_model=clip_model if use_cache else None,
-        clip_tokenizer=clip_tokenizer if use_cache else None,
-        device=accelerator.device,
-        dtype=cache_dtype,
-        gemma3_prompt=gemma3_prompt,
-    )
-
-    if use_cache:
-        logger.info("Cache enabled, freeing VAE, text_encoder and clip_model from GPU")
-        del vae, text_encoder, clip_model
-        import gc
-        gc.collect()
-        torch.cuda.empty_cache()
-        vae = text_encoder = clip_model = None
 
     train_dataloader = DataLoader(
         dataset,
