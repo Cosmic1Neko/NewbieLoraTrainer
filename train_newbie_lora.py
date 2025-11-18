@@ -444,7 +444,7 @@ def main():
     transport = create_transport(
         path_type="Linear",
         prediction="velocity",
-        snr_type="uniform",
+        snr_type="lognorm",
         do_shift=True,
         seq_len=seq_len
     )

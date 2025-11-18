@@ -7,7 +7,7 @@ def create_transport(
     loss_weight=None,
     train_eps=None,
     sample_eps=None,
-    snr_type="uniform",
+    snr_type="lognorm",
     do_shift=True,
     seq_len=1024,  # corresponding to 512x512
 ):
