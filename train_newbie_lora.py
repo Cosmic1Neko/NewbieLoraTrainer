@@ -66,6 +66,7 @@ class ImageCaptionDataset(Dataset):
         self.image_paths = []
         self.captions = []
         self.repeats = []
+        self.expanded_indices = []
         self.buckets = {}
         self.image_extensions = {'.jpg', '.jpeg', '.png', '.bmp', '.gif', '.webp'}
 
@@ -111,7 +112,10 @@ class ImageCaptionDataset(Dataset):
                     self.captions.append(caption)
                     self.repeats.append(repeats)
 
-        logger.info(f"Loaded {len(self.image_paths)} image-caption pairs")
+        for idx, repeat in enumerate(self.repeats):
+            self.expanded_indices.extend([idx] * repeat)
+
+        logger.info(f"Loaded {len(self.image_paths)} unique images with {len(self.expanded_indices)} total samples (including repeats)")
 
     def _prepare_cache(self):
         from PIL import Image
@@ -224,11 +228,12 @@ class ImageCaptionDataset(Dataset):
         logger.info(f"Created {len(buckets)} resolution buckets: {buckets}")
     
     def __len__(self):
-        return len(self.image_paths)
-    
+        return len(self.expanded_indices)
+
     def __getitem__(self, idx):
-        image_path = self.image_paths[idx]
-        caption = self.captions[idx]
+        actual_idx = self.expanded_indices[idx]
+        image_path = self.image_paths[actual_idx]
+        caption = self.captions[actual_idx]
 
         if self.use_cache:
             vae_cache = f"{image_path}.safetensors"
