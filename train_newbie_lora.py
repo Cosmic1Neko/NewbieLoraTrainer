@@ -584,7 +584,7 @@ def generate_noise(batch_size, num_channels, height, width, device):
     return torch.randn((batch_size, num_channels, height, width), device=device)
 
 
-def compute_loss(model, vae, text_encoder, tokenizer, clip_model, clip_tokenizer, transport, batch, device):
+def compute_loss(model, vae, text_encoder, tokenizer, clip_model, clip_tokenizer, transport, batch, device, gemma3_prompt=""):
     """计算 Rectified Flow 训练损失"""
     if batch.get("cached", False):
         latents = batch["latents"].to(device)
@@ -599,8 +599,6 @@ def compute_loss(model, vae, text_encoder, tokenizer, clip_model, clip_tokenizer
         pixel_values = batch["pixel_values"].to(device)
         captions = batch["captions"]
         batch_size = pixel_values.shape[0]
-
-        gemma3_prompt = config['Model'].get('gemma3_prompt', '')
 
         with torch.no_grad():
             gemma_texts = [gemma3_prompt + cap if gemma3_prompt else cap for cap in captions]
@@ -814,11 +812,11 @@ def main():
     )
     logger.info(f"Rectified Flow transport created (resolution={resolution}, seq_len={seq_len})")
 
-    model = setup_lora(model, config)
-
     if config['Model'].get('gradient_checkpointing', True):
         model.gradient_checkpointing_enable()
         logger.info("Gradient checkpointing enabled")
+
+    model = setup_lora(model, config)
 
     train_dataloader = DataLoader(
         dataset,
@@ -852,7 +850,7 @@ def main():
         for batch in train_dataloader:
             global_step += 1
 
-            loss = compute_loss(model, vae, text_encoder, tokenizer, clip_model, clip_tokenizer, transport, batch, accelerator.device)
+            loss = compute_loss(model, vae, text_encoder, tokenizer, clip_model, clip_tokenizer, transport, batch, accelerator.device, gemma3_prompt)
 
             accelerator.backward(loss)
 
