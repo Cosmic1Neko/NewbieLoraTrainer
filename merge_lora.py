@@ -66,7 +66,8 @@ def load_base_model(base_model_path: str, trust_remote_code: bool = True):
     vae_path = os.path.join(base_model_path, "vae")
     vae = AutoencoderKL.from_pretrained(
         vae_path if os.path.exists(vae_path) else "stabilityai/sdxl-vae",
-        torch_dtype=torch.float32
+        torch_dtype=torch.float32,
+        trust_remote_code=trust_remote_code
     )
 
     logger.info("Base model loaded")
