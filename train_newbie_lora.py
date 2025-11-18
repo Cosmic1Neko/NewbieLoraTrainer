@@ -732,10 +732,9 @@ def compute_loss(model, vae, text_encoder, tokenizer, clip_model, clip_tokenizer
             scaling_factor = getattr(vae.config, 'scaling_factor', 0.13025)
             latents = latents * scaling_factor
 
-    latents_list = [latents[i] for i in range(batch_size)]
     model_kwargs = dict(cap_feats=cap_feats, cap_mask=cap_mask, clip_text_pooled=clip_text_pooled)
 
-    loss_dict = transport.training_losses(model, latents_list, model_kwargs)
+    loss_dict = transport.training_losses(model, latents, model_kwargs)
     return loss_dict["loss"].mean()
 
 
