@@ -158,18 +158,26 @@ def load_model_and_tokenizer(config):
     model_index_path = os.path.join(base_model_path, "model_index.json")
     is_diffusers_format = os.path.exists(model_index_path)
 
+    mixed_precision = config['Model'].get('mixed_precision', 'no')
+    if mixed_precision == 'bf16':
+        model_dtype = torch.bfloat16
+    elif mixed_precision == 'fp16':
+        model_dtype = torch.float16
+    else:
+        model_dtype = torch.float32
+
     logger.info(f"Loading model from: {base_model_path}")
 
     if is_diffusers_format:
         logger.info("Diffusers format detected, auto-loading components")
 
         text_encoder_path = os.path.join(base_model_path, "text_encoder")
-        text_encoder = AutoModel.from_pretrained(text_encoder_path, torch_dtype=torch.float32, trust_remote_code=trust_remote_code)
+        text_encoder = AutoModel.from_pretrained(text_encoder_path, torch_dtype=model_dtype, trust_remote_code=trust_remote_code)
         tokenizer = AutoTokenizer.from_pretrained(text_encoder_path, trust_remote_code=trust_remote_code)
         tokenizer.padding_side = "right"
 
         clip_model_path = os.path.join(base_model_path, "clip_model")
-        clip_model = AutoModel.from_pretrained(clip_model_path, torch_dtype=torch.float32, trust_remote_code=True)
+        clip_model = AutoModel.from_pretrained(clip_model_path, torch_dtype=model_dtype, trust_remote_code=True)
         clip_tokenizer = AutoTokenizer.from_pretrained(clip_model_path, trust_remote_code=True)
 
         transformer_path = os.path.join(base_model_path, "transformer")
@@ -212,11 +220,11 @@ def load_model_and_tokenizer(config):
         clip_path = config['Model'].get('clip_model_path', 'jinaai/jina-clip-v2')
         transformer_path = config['Model'].get('transformer_path', None)
 
-        text_encoder = AutoModel.from_pretrained(gemma_path, torch_dtype=torch.float32, trust_remote_code=trust_remote_code)
+        text_encoder = AutoModel.from_pretrained(gemma_path, torch_dtype=model_dtype, trust_remote_code=trust_remote_code)
         tokenizer = AutoTokenizer.from_pretrained(gemma_path, trust_remote_code=trust_remote_code)
         tokenizer.padding_side = "right"
 
-        clip_model = AutoModel.from_pretrained(clip_path, torch_dtype=torch.float32, trust_remote_code=True)
+        clip_model = AutoModel.from_pretrained(clip_path, torch_dtype=model_dtype, trust_remote_code=True)
         clip_tokenizer = AutoTokenizer.from_pretrained(clip_path, trust_remote_code=True)
 
         cap_feat_dim = text_encoder.config.text_config.hidden_size
@@ -234,8 +242,11 @@ def load_model_and_tokenizer(config):
 
     model.train()
     vae.eval()
+    vae.requires_grad_(False)
     text_encoder.eval()
+    text_encoder.requires_grad_(False)
     clip_model.eval()
+    clip_model.requires_grad_(False)
 
     logger.info(f"Model loaded: {model.parameter_count():,} params, cap_feat_dim={cap_feat_dim}")
 
