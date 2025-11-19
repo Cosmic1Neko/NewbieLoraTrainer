@@ -887,15 +887,27 @@ def save_lora_model(accelerator, model, config, step=None):
     output_name = config['Model']['output_name']
     os.makedirs(output_dir, exist_ok=True)
 
-    save_path = os.path.join(output_dir, f"{output_name}_step_{step}" if step else output_name)
-
-    accelerator.unwrap_model(model).save_pretrained(
-        save_path,
-        is_main_process=accelerator.is_main_process,
-        state_dict=accelerator.get_state_dict(model)
-    )
+    if step:
+        save_path = os.path.join(output_dir, f"{output_name}_step_{step}.safetensors")
+    else:
+        save_path = os.path.join(output_dir, f"{output_name}.safetensors")
 
     if accelerator.is_main_process:
+        lora_state_dict = get_peft_model_state_dict(accelerator.unwrap_model(model))
+
+        lora_config = accelerator.unwrap_model(model).peft_config['default']
+        metadata = {
+            "lora_rank": str(lora_config.r),
+            "lora_alpha": str(lora_config.lora_alpha),
+            "lora_dropout": str(lora_config.lora_dropout),
+            "lora_target_modules": json.dumps(lora_config.target_modules),
+            "bias": str(lora_config.bias),
+            "base_model_name": config['Model'].get('base_model_path', ''),
+            "learning_rate": str(config['Model'].get('learning_rate', 0.0001)),
+            "resolution": str(config['Model'].get('resolution', 1024)),
+        }
+
+        save_file(lora_state_dict, save_path, metadata=metadata)
         logger.info(f"LoRA model saved: {save_path}")
 
 
