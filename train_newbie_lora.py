@@ -958,13 +958,14 @@ def setup_optimizer(model, config):
     optimizer_type = config['Optimization']['optimizer_type']
     learning_rate = config['Model']['learning_rate']
     adapter_type = getattr(model, "_adapter_type", "lora")
+    weight_decay = config['Optimization'].get('weight_decay', 0.01)
 
     if adapter_type == "lyco_lokr" and hasattr(model, "_lycoris_network"):
         trainable_params = model._lycoris_network.prepare_optimizer_params(learning_rate)
     else:
         trainable_params = [p for p in model.parameters() if p.requires_grad]
 
-    adam_kwargs = {"lr": learning_rate, "betas": (0.9, 0.999), "eps": 1e-8, "weight_decay": 0.001}
+    adam_kwargs = {"lr": learning_rate, "betas": (0.9, 0.999), "eps": 1e-8, "weight_decay": weight_decay}
 
     if optimizer_type == "AdamW8bit":
         try:
@@ -1595,6 +1596,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
