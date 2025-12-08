@@ -968,7 +968,7 @@ def get_tensors_summary(profiler_enabled=False):
     logger.info(f"{'='*80}\n")
 
 
-def compute_loss(model, vae, text_encoder, tokenizer, clip_model, clip_tokenizer, transport, batch, device, gemma3_prompt=""):
+def compute_loss(model, vae, text_encoder, tokenizer, clip_model, clip_tokenizer, transport, batch, device, gemma3_prompt="", use_multires_loss=True, multires_factor=4):
     """计算 Rectified Flow 训练损失"""
     if batch.get("cached", False):
         latents = batch["latents"].to(device)
@@ -1006,8 +1006,17 @@ def compute_loss(model, vae, text_encoder, tokenizer, clip_model, clip_tokenizer
 
     model_kwargs = dict(cap_feats=cap_feats, cap_mask=cap_mask, clip_text_pooled=clip_text_pooled)
 
-    loss_dict = transport.training_losses(model, latents, model_kwargs)
-    return loss_dict["loss"].mean()
+    ############ 损失计算 ############
+    # 原始分辨率损失
+    loss = transport.training_losses(model, latents, model_kwargs)["loss"].mean()
+    # 低分辨率损失
+    if use_multires_loss:
+        # 下采样 Latents
+        latents_low = apply_average_pool(latents, factor=multires_factor)
+        loss_low = transport.training_losses(model, latents_low, model_kwargs)["loss"].mean()
+        # 求和
+        loss = loss + loss_low
+    return loss
 
 
 def save_checkpoint(accelerator, model, optimizer, scheduler, step, config):
@@ -1447,6 +1456,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
