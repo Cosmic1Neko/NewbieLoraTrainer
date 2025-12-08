@@ -458,10 +458,6 @@ class ImageCaptionDataset(Dataset):
                     # 如果第一行只剩下 artist 标签，那么丢弃后第一行就空了
                     caption = rest_of_caption
         
-        # 3. Caption Dropout (整句丢弃, 用于CFG)
-        if self.caption_dropout_rate > 0 and random.random() < self.caption_dropout_rate:
-            return ""
-        
         # 3. Shuffle & Tag Dropout
         if self.shuffle_caption or self.caption_tag_dropout_rate > 0:
             fixed_tokens = []
@@ -486,6 +482,10 @@ class ImageCaptionDataset(Dataset):
             else:
                 # 对于NLP caption (不包含keep_tokens_separator)，不进行shuffle和tag dropout
                 caption = caption
+        
+        # 4. Caption Dropout (整句丢弃, 用于CFG)
+        if self.caption_dropout_rate > 0 and random.random() < self.caption_dropout_rate:
+            caption = ""
         
         return caption
 
@@ -1533,6 +1533,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
