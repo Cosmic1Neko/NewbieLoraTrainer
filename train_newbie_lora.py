@@ -192,7 +192,7 @@ class ImageCaptionDataset(Dataset):
             vae_cache = f"{image_path}.safetensors"
             #text_cache = f"{os.path.splitext(image_path)[0]}.txt.safetensors"
 
-            if not os.path.exists(vae_cache) or not os.path.exists(text_cache):
+            if not os.path.exists(vae_cache): #or not os.path.exists(text_cache):
                 missing_indices.append(idx)
 
         if missing_indices:
@@ -1596,6 +1596,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
