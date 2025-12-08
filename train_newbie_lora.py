@@ -190,7 +190,7 @@ class ImageCaptionDataset(Dataset):
 
         for idx, image_path in enumerate(self.image_paths):
             vae_cache = f"{image_path}.safetensors"
-            text_cache = f"{os.path.splitext(image_path)[0]}.txt.safetensors"
+            #text_cache = f"{os.path.splitext(image_path)[0]}.txt.safetensors"
 
             if not os.path.exists(vae_cache) or not os.path.exists(text_cache):
                 missing_indices.append(idx)
@@ -198,15 +198,15 @@ class ImageCaptionDataset(Dataset):
         if missing_indices:
             logger.info(f"Generating {len(missing_indices)} cache files...")
             self.vae.eval().to(self.device)
-            self.text_encoder.eval().to(self.device)
-            self.clip_model.eval().to(self.device)
+            #self.text_encoder.eval().to(self.device)
+            #self.clip_model.eval().to(self.device)
 
             with torch.no_grad():
                 for idx in tqdm(missing_indices, desc="Caching"):
                     image_path = self.image_paths[idx]
-                    caption = self.captions[idx]
+                    #caption = self.captions[idx]
                     vae_cache = f"{image_path}.safetensors"
-                    text_cache = f"{os.path.splitext(image_path)[0]}.txt.safetensors"
+                    #text_cache = f"{os.path.splitext(image_path)[0]}.txt.safetensors"
 
                     try:
                         try:
@@ -1596,6 +1596,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
