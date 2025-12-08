@@ -81,6 +81,13 @@ class ImageCaptionDataset(Dataset):
         self.image_extensions = {'.jpg', '.jpeg', '.png', '.bmp', '.gif', '.webp'}
 
         self.vae = vae
+        print("Enabling 'reflect' padding for VAE")
+        for module in vae.modules():
+            if isinstance(module, torch.nn.Conv2d):
+                pad_h, pad_w = module.padding if isinstance(module.padding, tuple) else (module.padding, module.padding)
+                if pad_h > 0 or pad_w > 0:
+                    module.padding_mode = "reflect"
+        
         self.text_encoder = text_encoder
         self.tokenizer = tokenizer
         self.clip_model = clip_model
@@ -1428,3 +1435,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
