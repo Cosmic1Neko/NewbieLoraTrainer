@@ -984,7 +984,9 @@ def setup_optimizer(model, config):
 def setup_scheduler(optimizer, config, train_dataloader):
     """设置学习率调度器"""
     num_epochs = config['Model']['num_epochs']
-    num_training_steps = num_epochs * len(train_dataloader)
+    gradient_accumulation_steps = config['Model'].get('gradient_accumulation_steps', 1)
+    num_update_steps_per_epoch = math.ceil(len(train_dataloader) / gradient_accumulation_steps)
+    num_training_steps = num_epochs * num_update_steps_per_epoch
     scheduler_type = config['Model']['lr_scheduler']
     lr_warmup_steps = config['Model'].get('lr_warmup_steps', 100)
 
@@ -1286,12 +1288,15 @@ def main():
     opt_cfg.setdefault('optimizer_type', 'AdamW')
     opt_cfg.setdefault('use_flash_attention_2', False)
 
-    output_dir = config['Model']['output_dir']
+    gradient_accumulation_steps = config['Model'].get('gradient_accumulation_steps', 1)
+
+    output_dir = config['Model']['output_dir']    
     os.makedirs(output_dir, exist_ok=True)
 
     ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
     accelerator = Accelerator(
         mixed_precision=config['Model'].get('mixed_precision', 'no'),
+        gradient_accumulation_steps=gradient_accumulation_steps,
         log_with="tensorboard",
         project_dir=output_dir,
         kwargs_handlers=[ddp_kwargs]
@@ -1511,7 +1516,8 @@ def main():
 
     if start_step > 0:
         logger.info(f"Resuming from epoch {start_epoch+1}, will skip {steps_to_skip_in_first_epoch} steps in first epoch")
-
+        
+    has_profiled_micro_step = False
     for epoch in range(start_epoch, config['Model']['num_epochs']):
         if config['Model'].get('enable_bucket', True) and hasattr(train_dataloader, 'batch_sampler'):
             if hasattr(train_dataloader.batch_sampler, 'set_epoch'):
@@ -1523,60 +1529,81 @@ def main():
             desc=f"Epoch {epoch+1}/{config['Model']['num_epochs']}",
             disable=not accelerator.is_main_process
         )
+        
         for batch_idx, batch in enumerate(progress_bar):
             if epoch == start_epoch and batch_idx < steps_to_skip_in_first_epoch:
                 continue
 
-            global_step += 1
+            # 判断是否是用于 Profiling 的第一个全局步（通常是第0步或断点续训的起始步）
+            is_profiling_step = (global_step == start_step) and args.profiler
 
-            if global_step == 1 and args.profiler:
-                print_memory_usage("Before first forward pass", args.profiler)
+            # 使用 accumulate 上下文
+            with accelerator.accumulate(model):
+                # ================= Profiler: Before Forward =================
+                # 仅在当前累积周期的第一个微步打印
+                if is_profiling_step and not has_profiled_micro_step:
+                    print_memory_usage("Before first forward pass", args.profiler)
 
-            loss = compute_loss(model, vae, text_encoder, tokenizer, clip_model, clip_tokenizer, transport, batch, accelerator.device, gemma3_prompt)
-            epoch_losses.append(loss.item())
+                # 1. 计算 Loss
+                loss = compute_loss(model, vae, text_encoder, tokenizer, clip_model, clip_tokenizer, transport, batch, accelerator.device, gemma3_prompt)
+                
+                # 记录 Loss (Accelerate 会自动处理累积步的平均，这里直接 append 即可)
+                epoch_losses.append(loss.item())
 
-            if global_step == 1 and args.profiler:
-                print_memory_usage("After first forward pass", args.profiler)
+                # ================= Profiler: After Forward =================
+                if is_profiling_step and not has_profiled_micro_step:
+                    print_memory_usage("After first forward pass", args.profiler)
 
-            accelerator.backward(loss)
+                # 2. 反向传播
+                accelerator.backward(loss)
 
-            if global_step == 1 and args.profiler:
-                print_memory_usage("After first backward pass", args.profiler)
+                # ================= Profiler: After Backward =================
+                if is_profiling_step and not has_profiled_micro_step:
+                    print_memory_usage("After first backward pass", args.profiler)
+                    # 标记已完成微步的 Profiling，避免在同一个累积周期内的后续微步重复打印
+                    has_profiled_micro_step = True 
 
-            if max_grad_norm > 0:
-                accelerator.clip_grad_norm_(model.parameters(), max_grad_norm)
+                # 3. 梯度裁剪、优化器步进 (仅在同步步执行)
+                if accelerator.sync_gradients:
+                    if max_grad_norm > 0:
+                        accelerator.clip_grad_norm_(model.parameters(), max_grad_norm)
 
-            optimizer.step()
-            scheduler.step()
-            optimizer.zero_grad()
+                    optimizer.step()
+                    scheduler.step()
+                    optimizer.zero_grad()
 
-            if global_step == 1 and args.profiler:
-                print_memory_usage("After first optimizer step", args.profiler)
-                get_tensors_summary(args.profiler)
-                logger.info("Profiling complete for first step. You can now Ctrl+C to stop.")
-                import sys
-                sys.exit(0)
+                    # ================= Profiler: After Optimizer & Exit =================
+                    # 仅在第一个完整的 Update Step 结束后执行
+                    if is_profiling_step:
+                        print_memory_usage("After first optimizer step", args.profiler)
+                        get_tensors_summary(args.profiler)
+                        logger.info("Profiling complete for first step. You can now Ctrl+C to stop.")
+                        sys.exit(0)
 
-            if accelerator.is_main_process:
-                accelerator.log({"loss": loss.item(), "learning_rate": scheduler.get_last_lr()[0]}, step=global_step)
+            # 4. 更新 Global Step 和 日志 (仅在同步步执行)
+            if accelerator.sync_gradients:
+                global_step += 1
 
-                elapsed = datetime.now() - start_time
-                steps_in_session = global_step - session_start_step
-                steps_per_sec = steps_in_session / elapsed.total_seconds() if elapsed.total_seconds() > 0 else 0
-                progress_bar.set_postfix({
-                    'loss': f'{loss.item():.4f}',
-                    'lr': f'{scheduler.get_last_lr()[0]:.2e}',
-                    'speed': f'{steps_per_sec:.2f} steps/s'
-                })
+                if accelerator.is_main_process:
+                    accelerator.log({"loss": loss.item(), "learning_rate": scheduler.get_last_lr()[0]}, step=global_step)
 
-            if global_step % 100 == 0 or global_step == 1:
-                elapsed = datetime.now() - start_time
-                steps_in_session = global_step - session_start_step
-                steps_per_sec = steps_in_session / elapsed.total_seconds() if elapsed.total_seconds() > 0 else 0
-                logger.info(f"Epoch {epoch+1}/{config['Model']['num_epochs']}, Step {global_step}/{num_training_steps}, Loss {loss.item():.4f}, LR {scheduler.get_last_lr()[0]:.7f}, Speed {steps_per_sec:.2f} steps/s")
+                    elapsed = datetime.now() - start_time
+                    steps_in_session = global_step - session_start_step
+                    steps_per_sec = steps_in_session / elapsed.total_seconds() if elapsed.total_seconds() > 0 else 0
+                    progress_bar.set_postfix({
+                        'loss': f'{loss.item():.4f}',
+                        'lr': f'{scheduler.get_last_lr()[0]:.2e}',
+                        'speed': f'{steps_per_sec:.2f} steps/s'
+                    })
 
-            if global_step % 1000 == 0:
-                save_checkpoint(accelerator, model, optimizer, scheduler, global_step, config)
+                if global_step % 100 == 0:
+                    elapsed = datetime.now() - start_time
+                    steps_in_session = global_step - session_start_step
+                    steps_per_sec = steps_in_session / elapsed.total_seconds() if elapsed.total_seconds() > 0 else 0
+                    logger.info(f"Epoch {epoch+1}/{config['Model']['num_epochs']}, Step {global_step}/{num_training_steps}, Loss {loss.item():.4f}, LR {scheduler.get_last_lr()[0]:.7f}, Speed {steps_per_sec:.2f} steps/s")
+
+                if global_step % 1000 == 0:
+                    save_checkpoint(accelerator, model, optimizer, scheduler, global_step, config)
 
         avg_epoch_loss = sum(epoch_losses) / len(epoch_losses) if epoch_losses else 0.0
         logger.info(f"Epoch {epoch+1}/{config['Model']['num_epochs']} completed - Average Loss: {avg_epoch_loss:.4f}")
@@ -1596,6 +1623,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
