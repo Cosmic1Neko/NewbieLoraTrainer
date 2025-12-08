@@ -1504,7 +1504,11 @@ def main():
     session_start_step = start_step
 
     if accelerator.is_main_process:
-        accelerator.init_trackers(os.path.split(__file__)[-1].split(".")[0])
+        accelerator.init_trackers(
+            project_name="Newbie-LoRA",
+            config=config,
+            init_kwargs={"wandb": {"name": config['Model']['output_name']}}
+        )
 
     start_time = datetime.now()
     max_grad_norm = config['Optimization'].get('gradient_clip_norm', 1.0)
@@ -1585,11 +1589,6 @@ def main():
                 global_step += 1
 
                 if accelerator.is_main_process:
-                    accelerator.init_trackers(
-                        project_name="Newbie-LoRA",
-                        config=config,
-                        init_kwargs={"wandb": {"name": config['Model']['output_name']}}
-                    )
                     accelerator.log({"loss": loss.item(), "learning_rate": scheduler.get_last_lr()[0]}, step=global_step)
 
                     elapsed = datetime.now() - start_time
@@ -1628,6 +1627,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
