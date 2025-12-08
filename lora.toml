@@ -124,7 +124,7 @@ lora_target_modules = [
 #   - "AdamW": 标准 AdamW 优化器
 #   - "AdamW8bit": 8-bit AdamW 优化器（推荐）
 optimizer_type = "AdamW8bit"
-weight_decay = 0.1
+weight_decay = 0.001
 
 # 梯度裁剪范数（Gradient Clipping）
 # 推荐值：0.5 - 2.0
@@ -132,6 +132,7 @@ gradient_clip_norm = 1.0
 
 # FlashAttention-2 优化
 use_flash_attention_2 = true
+
 
 
 
