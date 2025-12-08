@@ -45,6 +45,18 @@ except ImportError:
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("newbie_lora_trainer")
 
+def apply_average_pool(latent, factor=4):
+    """
+    Apply average pooling to downsample the latent.
+
+    Args:
+        latent (torch.Tensor): Latent tensor with shape (1, C, H, W).
+        factor (int): Downsampling factor.
+
+    Returns:
+        torch.Tensor: Downsampled latent tensor.
+    """
+    return torch.nn.functional.avg_pool2d(latent, kernel_size=factor, stride=factor)
 
 class ImageCaptionDataset(Dataset):
     """图像-文本对数据集，支持 kohya_ss 风格目录重复"""
@@ -1435,4 +1447,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
