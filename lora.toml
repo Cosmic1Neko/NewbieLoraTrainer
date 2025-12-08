@@ -129,7 +129,7 @@ lora_target_modules = [
     "t_embedder.mlp.0",
     "t_embedder.mlp.2",
     "time_text_embed.1",       
-    "x_embedder.weight",
+    "x_embedder",
     "clip_text_pooled_proj.1", 
     "linear"
 ]
@@ -151,6 +151,7 @@ gradient_clip_norm = 1.0
 
 # FlashAttention-2 优化
 use_flash_attention_2 = true
+
 
 
 
