@@ -25,7 +25,7 @@ resolution = 1024
 # 是否打乱tag
 shuffle_caption = true
 keep_tokens_separator = "|||"
-# 是否基于"<split>"分割符分割caption后，随机选取分隔后部分作为caption
+# 是否基于"<split>"分割符分割caption后，随机选取分隔后部分作为caption，用于NLP和Tags的混合训练
 enable_wildcard = true
 # "空"caption的概率，开启利于CFG
 caption_dropout_rate = 0.1
@@ -143,6 +143,7 @@ gradient_clip_norm = 1.0
 
 # FlashAttention-2 优化
 use_flash_attention_2 = true
+
 
 
 
