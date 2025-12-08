@@ -1297,7 +1297,7 @@ def main():
     accelerator = Accelerator(
         mixed_precision=config['Model'].get('mixed_precision', 'no'),
         gradient_accumulation_steps=gradient_accumulation_steps,
-        log_with="tensorboard",
+        log_with="wandb",
         project_dir=output_dir,
         kwargs_handlers=[ddp_kwargs]
     )
@@ -1585,6 +1585,11 @@ def main():
                 global_step += 1
 
                 if accelerator.is_main_process:
+                    accelerator.init_trackers(
+                        project_name="Newbie-LoRA",
+                        config=config,
+                        init_kwargs={"wandb": {"name": config['Model']['output_name']}}
+                    )
                     accelerator.log({"loss": loss.item(), "learning_rate": scheduler.get_last_lr()[0]}, step=global_step)
 
                     elapsed = datetime.now() - start_time
@@ -1623,6 +1628,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
