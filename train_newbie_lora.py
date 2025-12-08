@@ -243,7 +243,7 @@ class ImageCaptionDataset(Dataset):
                             gemma_text = self.gemma3_prompt + caption if self.gemma3_prompt else caption
                             gemma_inputs = self.tokenizer(
                                 [gemma_text], padding=True, pad_to_multiple_of=8,
-                                truncation=True, max_length=512, return_tensors="pt"
+                                truncation=True, max_length=1280, return_tensors="pt"
                             ).to(self.device)
                             gemma_outputs = self.text_encoder(**gemma_inputs, output_hidden_states=True)
                             cap_feats = gemma_outputs.hidden_states[-2].squeeze(0).to(dtype=self.dtype).cpu()
@@ -1456,6 +1456,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
