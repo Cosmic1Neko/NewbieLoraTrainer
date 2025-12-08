@@ -1276,15 +1276,15 @@ def main():
         )
 
     # 创建 Rectified Flow transport
-    seq_len = (resolution // 16) ** 2
+    #seq_len = (resolution // 16) ** 2
     transport = create_transport(
         path_type="Linear",
         prediction="velocity",
         snr_type="lognorm",
         do_shift=True,
-        seq_len=seq_len
+        #seq_len=seq_len
     )
-    logger.info(f"Rectified Flow transport created (resolution={resolution}, seq_len={seq_len})")
+    logger.info(f"Rectified Flow transport created.")
 
     if config['Model'].get('gradient_checkpointing', True):
         model.gradient_checkpointing_enable()
@@ -1447,5 +1447,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
