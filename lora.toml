@@ -1,15 +1,15 @@
 [Model]
 #模型加载路径，填写clip_model、text_encoder、transformer、vae、model_index.json所在的文件夹路径
-base_model_path = "D:/ai/newbei-comfyui/ComfyUI/models/diffusion_models/newbie"
+base_model_path = "/root/autodl-tmp/model/newbie"
 
 # 是否信任远程代码（Gemma 和 CLIP 模型需要）
 trust_remote_code = true
 
 # 训练输出目录
-output_dir = "./output"
+output_dir = "/root/autodl-tmp/output"
 
 # 输出的 LoRA 模型名称（最终保存为 output_dir/output_name/）
-output_name = "datou"
+output_name = "NewBieLoRA"
 
 # =============================================================================
 # 数据配置
@@ -18,11 +18,20 @@ output_name = "datou"
 # 支持 kohya_ss 风格：目录名格式为 "重复次数_描述"
 # 例如：data/train/10_character/ 表示该目录下的图像重复10次
 # 每张图像需要有对应的 .txt 文件作为文本描述
-train_data_dir = "G:/数据集/#Goofy ahh big headのイラスト作品(投稿超过1000件） - pixiv"
+train_data_dir = "/root/autodl-tmp/datasets"
 
 # 训练图像分辨率
-#推荐1024
 resolution = 1024
+# 是否打乱tag
+shuffle_caption = True
+keep_tokens_separator = "|||"
+enable_wildcard = True
+# "空"caption的概率，开启利于CFG
+caption_dropout_rate = 0.1
+# 随机丢弃tag的概率
+caption_tag_dropout_rate = 0
+# 随机丢弃artist标签的概率
+drop_artist_rate = 0.2
 
 # DataLoader 工作线程数
 dataloader_num_workers = 8
@@ -33,13 +42,13 @@ dataloader_num_workers = 8
 enable_bucket = true
 
 # 启用数据缓存（推荐）
-# true: 预先缓存 VAE latents 和文本特征，大幅加速训练并节省显存
+# true: 预先缓存 VAE latents, 加速训练并节省显存
 # false: 每次实时编码（慢，但不占用磁盘空间）
-# 缓存文件保存在数据集同目录：图片.safetensors, 文本.txt.safetensors
+# 缓存文件保存在数据集同目录：图片.safetensors,
 use_cache = true
 
 # Gemma3 系统提示词（仅用于 Gemma3，不影响 Jina CLIP）
-gemma3_prompt = "You are an assistant designed to generate high-quality anime images with the highest degree of image-text alignment based on textual prompts. <Prompt Start>"
+gemma3_prompt = "You are an assistant designed to generate high-quality anime images with the highest degree of image-text alignment based on textual prompts. <Prompt Start>\n"
 
 # =============================================================================
 # 训练超参数
@@ -48,7 +57,7 @@ gemma3_prompt = "You are an assistant designed to generate high-quality anime im
 train_batch_size = 4
 
 # 训练轮数（遍历整个数据集的次数）
-num_epochs = 30
+num_epochs = 10
 
 # Checkpoint 保存间隔（按 Epoch）
 # 每隔多少个 epoch 保存一次检查点
@@ -57,7 +66,7 @@ save_epochs_interval = 1
 
 # 学习率
 #默认推荐推荐1e-4和2e-4，可自行测试
-learning_rate = 1e-4
+learning_rate = 2e-4
 
 # 学习率调度器（控制学习率在训练过程中的变化）
 # 可选值：
@@ -68,7 +77,7 @@ learning_rate = 1e-4
 lr_scheduler = "cosine"
 
 # 学习率预热步数
-lr_warmup_steps = 0
+lr_warmup_steps = 0.05
 
 # 梯度检查点
 gradient_checkpointing = true
@@ -85,11 +94,11 @@ mixed_precision = "bf16"
 # LoRA 配置
 # =============================================================================
 # LoRA rank（秩）
-lora_rank = 8
+lora_rank = 128
 
 # LoRA alpha
 #推荐等于lora_rank
-lora_alpha = 4
+lora_alpha = 128
 
 # LoRA dropout
 #推荐0.05-0.1
@@ -122,4 +131,5 @@ gradient_clip_norm = 1.0
 
 # FlashAttention-2 优化
 use_flash_attention_2 = true
+
 
