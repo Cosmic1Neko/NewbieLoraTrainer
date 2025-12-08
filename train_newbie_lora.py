@@ -1315,7 +1315,7 @@ def main():
     drop_artist_rate = config['Model'].get('drop_artist_rate', 0.0)
 
     if use_cache:
-        logger.info("Checking if cache files exist...")
+        logger.info("Checking if VAE cache files exist...")
         train_data_dir = config['Model']['train_data_dir']
         image_paths = []
         for root, _, files in os.walk(train_data_dir):
@@ -1326,40 +1326,41 @@ def main():
         cache_complete = True
         for image_path in image_paths:
             vae_cache = f"{image_path}.safetensors"
-            text_cache = f"{os.path.splitext(image_path)[0]}.txt.safetensors"
-            if not os.path.exists(vae_cache) or not os.path.exists(text_cache):
+            #text_cache = f"{os.path.splitext(image_path)[0]}.txt.safetensors"
+            if not os.path.exists(vae_cache): # or not os.path.exists(text_cache):
                 cache_complete = False
                 break
 
-        if cache_complete:
-            logger.info("Cache complete, skipping encoder loading")
-            vae = text_encoder = tokenizer = clip_model = clip_tokenizer = None
-        else:
-            logger.info("Cache incomplete, loading encoders for generation...")
-            vae, text_encoder, tokenizer, clip_model, clip_tokenizer = load_encoders_only(config)
+        logger.info("Loading encoders...")
+        vae, text_encoder, tokenizer, clip_model, clip_tokenizer = load_encoders_only(config)
 
+        if not cache_complete:
+            logger.info("Cache incomplete, generating VAE latents...")
             dataset = ImageCaptionDataset(
                 train_data_dir=train_data_dir,
                 resolution=resolution,
                 enable_bucket=config['Model'].get('enable_bucket', True),
                 use_cache=True,
                 vae=vae,
-                text_encoder=text_encoder,
-                tokenizer=tokenizer,
-                clip_model=clip_model,
-                clip_tokenizer=clip_tokenizer,
+                text_encoder=None,
+                tokenizer=None,
+                clip_model=None,
+                clip_tokenizer=None,
                 device=accelerator.device,
                 dtype=cache_dtype,
                 gemma3_prompt=gemma3_prompt,
             )
-
-            logger.info("Cache generated, freeing encoders from GPU")
             del dataset
-            del vae, text_encoder, clip_model, clip_tokenizer, tokenizer
             import gc
             gc.collect()
             torch.cuda.empty_cache()
-            vae = text_encoder = tokenizer = clip_model = clip_tokenizer = None
+
+        logger.info("Unloading VAE to save memory (using cached latents)...")
+        del vae
+        import gc
+        gc.collect()
+        torch.cuda.empty_cache()
+        vae = None
 
         logger.info("Loading NextDiT model for training...")
         model = load_transformer_only(config)
@@ -1378,6 +1379,12 @@ def main():
             device=accelerator.device,
             dtype=cache_dtype,
             gemma3_prompt=gemma3_prompt,
+            shuffle_caption=shuffle_caption,
+            keep_tokens_separator=keep_tokens_separator,
+            enable_wildcard=enable_wildcard,
+            caption_dropout_rate=caption_dropout_rate,
+            caption_tag_dropout_rate=caption_tag_dropout_rate,
+            drop_artist_rate=drop_artist_rate,
         )
     else:
         model, vae, text_encoder, tokenizer, clip_model, clip_tokenizer = load_model_and_tokenizer(config)
@@ -1454,7 +1461,8 @@ def main():
     print_memory_usage("Before accelerator.prepare", args.profiler)
     model, optimizer, train_dataloader, scheduler = accelerator.prepare(model, optimizer, train_dataloader, scheduler)
     print_memory_usage("After accelerator.prepare", args.profiler)
-
+    
+    """
     # Do NOT prepare encoders - they should stay frozen and not be wrapped
     if not use_cache:
         vae = vae.to(accelerator.device)
@@ -1467,6 +1475,19 @@ def main():
         text_encoder.requires_grad_(False)
         clip_model.requires_grad_(False)
         print_memory_usage("After loading encoders (no cache)", args.profiler)
+    """
+    if text_encoder is not None:
+        text_encoder = text_encoder.to(accelerator.device)
+        text_encoder.eval()
+        text_encoder.requires_grad_(False)
+    if clip_model is not None:
+        clip_model = clip_model.to(accelerator.device)
+        clip_model.eval()
+        clip_model.requires_grad_(False)
+    if vae is not None:
+        vae = vae.to(accelerator.device)
+        vae.eval()
+        vae.requires_grad_(False)
 
     start_step = load_checkpoint(accelerator, model, optimizer, scheduler, config)
 
@@ -1575,6 +1596,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
