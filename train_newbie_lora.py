@@ -964,7 +964,7 @@ def setup_optimizer(model, config):
     else:
         trainable_params = [p for p in model.parameters() if p.requires_grad]
 
-    adam_kwargs = {"lr": learning_rate, "betas": (0.9, 0.999), "eps": 1e-8, "weight_decay": 0.01}
+    adam_kwargs = {"lr": learning_rate, "betas": (0.9, 0.999), "eps": 1e-8, "weight_decay": 0.001}
 
     if optimizer_type == "AdamW8bit":
         try:
@@ -1595,6 +1595,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
