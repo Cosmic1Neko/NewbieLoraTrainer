@@ -379,6 +379,8 @@ class ImageCaptionDataset(Dataset):
                 "cached": True,
             }
         else:
+            caption = self.process_caption(caption)
+            
             from PIL import Image
             try:
                 import cv2
@@ -1533,6 +1535,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
