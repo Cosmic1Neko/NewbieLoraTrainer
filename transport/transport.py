@@ -42,7 +42,7 @@ class WeightType(enum.Enum):
 
 
 class Transport:
-    def __init__(self, *, model_type, path_type, loss_type, train_eps, sample_eps, snr_type, do_shift, seq_len):
+    def __init__(self, *, model_type, path_type, loss_type, train_eps, sample_eps, snr_type, do_shift):
         path_options = {
             PathType.LINEAR: path.ICPlan,
             PathType.GVP: path.GVPCPlan,
@@ -57,7 +57,6 @@ class Transport:
 
         self.snr_type = snr_type
         self.do_shift = do_shift
-        self.seq_len = seq_len
 
     def prior_logp(self, z):
         """
@@ -123,8 +122,14 @@ class Transport:
         if self.do_shift:
             base_shift: float = 0.5
             max_shift: float = 1.15
-            mu = self.get_lin_function(y1=base_shift, y2=max_shift)(self.seq_len)
+            if isinstance(x1, (list, tuple)):
+                h, w = x1[0].shape[-2:]
+            else:
+                h, w = x1.shape[-2:]
+            current_seq_len = (h // 2) * (w // 2)
+            mu = self.get_lin_function(y1=base_shift, y2=max_shift)(current_seq_len)
             t = self.time_shift(mu, 1.0, t)
+        
         t = t.to(x1[0])
         return t, x0, x1
 
