@@ -23,9 +23,9 @@ train_data_dir = "/root/autodl-tmp/datasets"
 # 训练图像分辨率
 resolution = 1024
 # 是否打乱tag
-shuffle_caption = True
+shuffle_caption = true
 keep_tokens_separator = "|||"
-enable_wildcard = True
+enable_wildcard = true
 # "空"caption的概率，开启利于CFG
 caption_dropout_rate = 0.1
 # 随机丢弃tag的概率
@@ -142,6 +142,7 @@ gradient_clip_norm = 1.0
 
 # FlashAttention-2 优化
 use_flash_attention_2 = true
+
 
 
 
