@@ -1318,6 +1318,8 @@ def main():
     caption_dropout_rate = config['Model'].get('caption_dropout_rate', 0.0)
     caption_tag_dropout_rate = config['Model'].get('caption_tag_dropout_rate', 0.0)
     drop_artist_rate = config['Model'].get('drop_artist_rate', 0.0)
+    use_multires_loss = config['Model'].get('use_multires_loss', True)
+    multires_factor = config['Model'].get('multires_factor', 4)
 
     if use_cache:
         logger.info("Checking if VAE cache files exist...")
@@ -1549,7 +1551,20 @@ def main():
                     print_memory_usage("Before first forward pass", args.profiler)
 
                 # 1. 计算 Loss
-                loss = compute_loss(model, vae, text_encoder, tokenizer, clip_model, clip_tokenizer, transport, batch, accelerator.device, gemma3_prompt)
+                loss = compute_loss(
+                    model, 
+                    vae, 
+                    text_encoder, 
+                    tokenizer, 
+                    clip_model, 
+                    clip_tokenizer, 
+                    transport, 
+                    batch, 
+                    accelerator.device, 
+                    gemma3_prompt,
+                    use_multires_loss,
+                    multires_factor
+                )
                 
                 # 记录 Loss (Accelerate 会自动处理累积步的平均，这里直接 append 即可)
                 epoch_losses.append(loss.item())
@@ -1627,6 +1642,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
