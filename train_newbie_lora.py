@@ -1279,6 +1279,12 @@ def main():
     cache_dtype = torch.bfloat16 if mixed_precision == 'bf16' else (torch.float16 if mixed_precision == 'fp16' else torch.float32)
     gemma3_prompt = config['Model'].get('gemma3_prompt', '')
     resolution = config['Model']['resolution']
+    shuffle_caption = config['Model'].get('shuffle_caption', False)
+    keep_tokens_separator = config['Model'].get('keep_tokens_separator', "|||")
+    enable_wildcard = config['Model'].get('enable_wildcard', False)
+    caption_dropout_rate = config['Model'].get('caption_dropout_rate', 0.0)
+    caption_tag_dropout_rate = config['Model'].get('caption_tag_dropout_rate', 0.0)
+    drop_artist_rate = config['Model'].get('drop_artist_rate', 0.0)
 
     if use_cache:
         logger.info("Checking if cache files exist...")
@@ -1361,6 +1367,12 @@ def main():
             device=accelerator.device,
             dtype=cache_dtype,
             gemma3_prompt=gemma3_prompt,
+            shuffle_caption=shuffle_caption,
+            keep_tokens_separator=keep_tokens_separator,
+            enable_wildcard=enable_wildcard,
+            caption_dropout_rate=caption_dropout_rate,
+            caption_tag_dropout_rate=caption_tag_dropout_rate,
+            drop_artist_rate=drop_artist_rate,
         )
 
     # 创建 Rectified Flow transport
@@ -1535,6 +1547,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
