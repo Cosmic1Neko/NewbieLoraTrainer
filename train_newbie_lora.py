@@ -254,6 +254,7 @@ class ImageCaptionDataset(Dataset):
                             "height": torch.tensor(target_height)
                         }, vae_cache)
 
+                        """
                         with torch.autocast(device_type='cuda', dtype=self.dtype):
                             gemma_text = self.gemma3_prompt + caption if self.gemma3_prompt else caption
                             gemma_inputs = self.tokenizer(
@@ -275,7 +276,8 @@ class ImageCaptionDataset(Dataset):
                             "cap_mask": cap_mask,
                             "clip_text_pooled": clip_text_pooled
                         }, text_cache)
-
+                        """
+                        
                     except Exception as e:
                         logger.error(f"Cache error for {image_path}: {e}")
 
@@ -366,16 +368,19 @@ class ImageCaptionDataset(Dataset):
 
         if self.use_cache:
             vae_cache = f"{image_path}.safetensors"
-            text_cache = f"{os.path.splitext(image_path)[0]}.txt.safetensors"
+            #text_cache = f"{os.path.splitext(image_path)[0]}.txt.safetensors"
 
             vae_data = load_file(vae_cache)
-            text_data = load_file(text_cache)
+            #text_data = load_file(text_cache)
 
+            caption = self.process_caption(caption)
+            
             return {
                 "latents": vae_data['latents'],
-                "cap_feats": text_data['cap_feats'],
-                "cap_mask": text_data['cap_mask'],
-                "clip_text_pooled": text_data['clip_text_pooled'],
+                #"cap_feats": text_data['cap_feats'],
+                #"cap_mask": text_data['cap_mask'],
+                #"clip_text_pooled": text_data['clip_text_pooled'],
+                "caption": caption,
                 "cached": True,
             }
         else:
@@ -548,6 +553,7 @@ class BucketBatchSampler:
 
 def collate_fn(batch):
     if batch[0].get("cached", False):
+        """
         max_cap_len = max(example["cap_feats"].shape[0] for example in batch)
 
         cap_feats_list = []
@@ -564,12 +570,13 @@ def collate_fn(batch):
 
             cap_feats_list.append(cap_feat)
             cap_mask_list.append(cap_mask)
-
+        """
         return {
             "latents": torch.stack([example["latents"] for example in batch]),
-            "cap_feats": torch.stack(cap_feats_list),
-            "cap_mask": torch.stack(cap_mask_list),
-            "clip_text_pooled": torch.stack([example["clip_text_pooled"] for example in batch]),
+            "captions": [example["caption"] for example in batch],
+            #"cap_feats": torch.stack(cap_feats_list),
+            #"cap_mask": torch.stack(cap_mask_list),
+            #"clip_text_pooled": torch.stack([example["clip_text_pooled"] for example in batch]),
             "cached": True,
         }
     else:
@@ -1051,19 +1058,21 @@ def compute_loss(model, vae, text_encoder, tokenizer, clip_model, clip_tokenizer
     """计算 Rectified Flow 训练损失"""
     if batch.get("cached", False):
         latents = batch["latents"].to(device)
-        cap_feats = batch["cap_feats"].to(device)
-        cap_mask = batch["cap_mask"].to(device)
-        clip_text_pooled = batch["clip_text_pooled"].to(device)
+        #cap_feats = batch["cap_feats"].to(device)
+        #cap_mask = batch["cap_mask"].to(device)
+        #clip_text_pooled = batch["clip_text_pooled"].to(device)
+        captions = batch["captions"]
         batch_size = latents.shape[0]
     else:
-        if vae is None or text_encoder is None or clip_model is None:
-            raise RuntimeError("Models required for non-cached data but they are None. Enable cache or disable it in config.")
+        if vae is None:
+            raise RuntimeError("VAE required for non-cached data")
 
         pixel_values = batch["pixel_values"].to(device)
         captions = batch["captions"]
         batch_size = pixel_values.shape[0]
 
         with torch.no_grad():
+            """
             gemma_texts = [gemma3_prompt + cap if gemma3_prompt else cap for cap in captions]
             gemma_inputs = tokenizer(
                 gemma_texts, padding=True, pad_to_multiple_of=8,
@@ -1078,10 +1087,29 @@ def compute_loss(model, vae, text_encoder, tokenizer, clip_model, clip_tokenizer
                 max_length=2048, return_tensors="pt"
             ).to(device)
             clip_text_pooled = clip_model.get_text_features(**clip_inputs)
-
+            """
             latents = vae.encode(pixel_values).latent_dist.sample()
             scaling_factor = getattr(vae.config, 'scaling_factor', 0.13025)
             latents = latents * scaling_factor
+    if text_encoder is None or clip_model is None:
+         raise RuntimeError("Text Encoders required! Even with cache, we calculate text embeddings on-the-fly.")
+
+    with torch.no_grad():
+        # Gemma 编码
+        gemma_texts = [gemma3_prompt + cap if gemma3_prompt else cap for cap in captions]
+        gemma_inputs = tokenizer(
+            gemma_texts, padding=True, pad_to_multiple_of=8,
+            truncation=True, max_length=1280, return_tensors="pt"
+        ).to(device)
+        gemma_outputs = text_encoder(**gemma_inputs, output_hidden_states=True)
+        cap_feats = gemma_outputs.hidden_states[-2]
+        cap_mask = gemma_inputs.attention_mask
+        # CLIP 编码
+        clip_inputs = clip_tokenizer(
+            captions, padding=True, truncation=True,
+            max_length=2048, return_tensors="pt"
+        ).to(device)
+        clip_text_pooled = clip_model.get_text_features(**clip_inputs)
 
     model_kwargs = dict(cap_feats=cap_feats, cap_mask=cap_mask, clip_text_pooled=clip_text_pooled)
 
@@ -1547,6 +1575,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
