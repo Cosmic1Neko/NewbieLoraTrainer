@@ -27,6 +27,8 @@ from transformers import AutoTokenizer, AutoModel, AutoConfig
 from peft import LoraConfig, get_peft_model, PeftModel, get_peft_model_state_dict, set_peft_model_state_dict
 from safetensors.torch import load_file, save_file
 from tqdm import tqdm
+import re
+import random
 
 try:
     from lycoris.wrapper import LycorisNetwork
@@ -78,6 +80,12 @@ class ImageCaptionDataset(Dataset):
         min_bucket_reso: int = 256,
         max_bucket_reso: int = 2048,
         bucket_reso_step: int = 64,
+        shuffle_caption: bool = False,
+        keep_tokens_separator: str = "|||",
+        enable_wildcard: bool = False,
+        caption_dropout_rate: float = 0.0,
+        caption_tag_dropout_rate: float = 0.0,
+        drop_artist_rate: float = 0.0,
     ):
         self.train_data_dir = train_data_dir
         self.resolution = resolution
@@ -110,6 +118,13 @@ class ImageCaptionDataset(Dataset):
         self.min_bucket_reso = min_bucket_reso
         self.max_bucket_reso = max_bucket_reso
         self.bucket_reso_step = bucket_reso_step
+        self.shuffle_caption = shuffle_caption
+        self.keep_tokens_separator = keep_tokens_separator
+        self.enable_wildcard = enable_wildcard
+        self.caption_dropout_rate = caption_dropout_rate
+        self.caption_tag_dropout_rate = caption_tag_dropout_rate
+        self.drop_artist_rate = drop_artist_rate
+        self.caption_separator = ","
 
         self._load_data()
         if self.enable_bucket:
@@ -411,6 +426,68 @@ class ImageCaptionDataset(Dataset):
             ])
 
             return {"pixel_values": transform(image), "caption": caption, "cached": False}
+
+    def process_caption(self, caption):
+        """
+        Input example:
+            1. @artist, #character1\n1girl ||| tag1, tag2<split>@artist, #character1\nA girl stands....
+            2. @artist\n1girl ||| tag1, tag2<split>@artist\nA girl stands....
+            3. 1girl ||| tag1, tag2<split>A girl stands....
+        """
+        # 1. Wildcard 随机选取多重caption (基于"<split>"符分隔)
+        if self.enable_wildcard:
+            if "<split>" in caption:
+                caption = random.choice(caption.split("<split>"))
+            
+        # 2. 处理 Artist Dropout
+        if self.drop_artist_rate > 0 and random.random() < self.drop_artist_rate:
+            # 检查是否包含换行符(是否有作者/角色信息)
+            if "\n" in caption:
+                parts = caption.split("\n", 1)
+                first_line = parts[0]
+                rest_of_caption = parts[1]
+                # 使用正则表达式移除 @artist 标签
+                new_first_line = re.sub(r'@\S+', '', first_line).strip()
+                # 移除标签后，可能会在开头留下一个多余的逗号和空格，我们将其清理掉
+                if new_first_line.startswith(','):
+                    new_first_line = new_first_line[1:].strip()
+                # 如果第一行还有内容，就把它和剩余部分重新组合起来
+                if new_first_line:
+                    caption = new_first_line + "\n" + rest_of_caption
+                else:
+                    # 如果第一行只剩下 artist 标签，那么丢弃后第一行就空了
+                    caption = rest_of_caption
+        
+        # 3. Caption Dropout (整句丢弃, 用于CFG)
+        if self.caption_dropout_rate > 0 and random.random() < self.caption_dropout_rate:
+            return ""
+        
+        # 3. Shuffle & Tag Dropout
+        if self.shuffle_caption or self.caption_tag_dropout_rate > 0:
+            fixed_tokens = []
+            flex_tokens = []
+            
+            # 处理 keep_tokens_separator
+            if self.keep_tokens_separator and self.keep_tokens_separator in caption:
+                parts = caption.split(self.keep_tokens_separator, 1)
+                fixed_part = parts[0]
+                flex_part = parts[1]
+                fixed_tokens = [t.strip() for t in fixed_part.split(self.caption_separator) if t.strip()]
+                flex_tokens = [t.strip() for t in flex_part.split(self.caption_separator) if t.strip()]
+
+                # Tag Shuffle
+                if self.shuffle_caption:
+                    random.shuffle(flex_tokens)
+                # Tag Dropout
+                if self.caption_tag_dropout_rate > 0:
+                    flex_tokens = [t for t in flex_tokens if random.random() >= self.caption_tag_dropout_rate]
+                # 重组
+                caption = ", ".join(fixed_tokens + flex_tokens)
+            else:
+                # 对于NLP caption (不包含keep_tokens_separator)，不进行shuffle和tag dropout
+                caption = caption
+        
+        return caption
 
 
 class BucketBatchSampler:
@@ -1456,6 +1533,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
