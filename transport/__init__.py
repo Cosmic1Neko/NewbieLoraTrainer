@@ -9,7 +9,7 @@ def create_transport(
     sample_eps=None,
     snr_type="lognorm",
     do_shift=True,
-    seq_len=1024,  # corresponding to 512x512
+    #seq_len=1024,  # corresponding to 512x512
 ):
     """function for creating Transport object
     **Note**: model prediction defaults to velocity
