@@ -1111,16 +1111,13 @@ def save_lora_model(accelerator, model, config, step=None):
     unwrapped = accelerator.unwrap_model(model)
     adapter_type = getattr(unwrapped, "_adapter_type", "lora")
 
-    # ===== LyCORIS LoKr 分支 =====
     lyco_net = getattr(unwrapped, "_lycoris_network", None)
     if lyco_net is None:
         raise RuntimeError("LyCORIS network not initialized")
 
-    # 和 LoRA 一样：建一个目录，而不是直接写 .safetensors 文件
     save_dir = os.path.join(output_dir, f"{output_name}_step_{step}" if step else output_name)
     os.makedirs(save_dir, exist_ok=True)
 
-    # 权重文件名也对齐 LoRA：adapter_model.safetensors
     weights_path = os.path.join(save_dir, "adapter_model.safetensors")
 
     if accelerator.is_main_process:
@@ -1571,6 +1568,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
