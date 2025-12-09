@@ -1023,27 +1023,9 @@ def compute_loss(model, vae, text_encoder, tokenizer, clip_model, clip_tokenizer
         batch_size = pixel_values.shape[0]
 
         with torch.no_grad():
-            """
-            gemma_texts = [gemma3_prompt + cap if gemma3_prompt else cap for cap in captions]
-            gemma_inputs = tokenizer(
-                gemma_texts, padding=True, pad_to_multiple_of=8,
-                truncation=True, max_length=512, return_tensors="pt"
-            ).to(device)
-            gemma_outputs = text_encoder(**gemma_inputs, output_hidden_states=True)
-            cap_feats = gemma_outputs.hidden_states[-2]
-            cap_mask = gemma_inputs.attention_mask
-
-            clip_inputs = clip_tokenizer(
-                captions, padding=True, truncation=True,
-                max_length=2048, return_tensors="pt"
-            ).to(device)
-            clip_text_pooled = clip_model.get_text_features(**clip_inputs)
-            """
             latents = vae.encode(pixel_values).latent_dist.sample()
             scaling_factor = getattr(vae.config, 'scaling_factor', 0.13025)
             latents = latents * scaling_factor
-    if text_encoder is None or clip_model is None:
-         raise RuntimeError("Text Encoders required! Even with cache, we calculate text embeddings on-the-fly.")
 
     with torch.no_grad():
         # Gemma 编码
@@ -1564,6 +1546,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
