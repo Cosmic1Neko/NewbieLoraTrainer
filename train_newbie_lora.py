@@ -832,87 +832,15 @@ def load_model_and_tokenizer(config):
 
 
 def setup_lora(model, config):
-    """Apply adapter (LoRA or LyCORIS LoKR) to model"""
-    adapter_type = str(config['Model'].get('adapter_type', 'lora')).lower()
-
-    # ====== LyCORIS LoKR 分支======
-    if adapter_type in {"lyco_lokr", "lycoris_lokr", "lokr", "lyco-lokr"}:
-        if LycorisNetwork is None:
-            raise ImportError("lycoris-lora is required for LyCORIS LoKR")
-
-        default_target_modules = [
-            "attention.qkv",
-            "attention.out",
-            "feed_forward.w2",
-            "time_text_embed.1",
-            "clip_text_pooled_proj.1",
-        ]
-
-
-        lokr_rank = config['Model'].get('lokr_rank', config['Model'].get('lora_rank'))
-        lokr_alpha = config['Model'].get('lokr_alpha', config['Model'].get('lora_alpha', lokr_rank))
-        lokr_target_modules = (
-            config['Model'].get('lokr_target_modules')
-            or config['Model'].get('lora_target_modules')
-            or default_target_modules
-        )
-        lokr_dropout = config['Model'].get('lokr_dropout', config['Model'].get('lora_dropout', 0.05))
-        lokr_rank_dropout = config['Model'].get('lokr_rank_dropout', 0.0)
-        lokr_module_dropout = config['Model'].get('lokr_module_dropout', 0.0)
-        lokr_factor = config['Model'].get('lokr_factor', -1)
-        lokr_train_norm = config['Model'].get('lokr_train_norm', False)
-        target_patterns = []
-        for name in lokr_target_modules:
-            if "*" in name or "?" in name:
-                target_patterns.append(name)
-            else:
-                target_patterns.append(f"*{name}")
-
-        LycorisNetwork.apply_preset({
-            "enable_conv": True,
-            "target_module": [],
-            "target_name": target_patterns,
-            "use_fnmatch": True,
-            "exclude_name": [],
-        })
-
-        network = LycorisNetwork(
-            model,
-            multiplier=1.0,
-            lora_dim=lokr_rank,
-            conv_lora_dim=lokr_rank,
-            alpha=lokr_alpha,
-            conv_alpha=lokr_alpha,
-            dropout=lokr_dropout,
-            rank_dropout=lokr_rank_dropout,
-            module_dropout=lokr_module_dropout,
-            network_module="lokr",
-            train_norm=lokr_train_norm,
-            factor=lokr_factor,
-        )
-        network.apply_to()
-        device = next(model.parameters()).device
-        network.to(device)
-
-
-        model._adapter_type = "lyco_lokr"
-        model._lycoris_network = network
-        model._adapter_rank = lokr_rank
-        model._adapter_alpha = lokr_alpha
-
-        trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-        total_params = sum(p.numel() for p in model.parameters())
-        logger.info(
-            f"LyCORIS LoKR applied: {trainable_params/1e6:.2f}M/{total_params/1e6:.2f}M trainable "
-            f"({trainable_params/total_params*100:.2f}%)"
-        )
-        logger.info(f"  Target patterns: {target_patterns}")
-        logger.info(f"  LoKR rank={lokr_rank}, alpha={lokr_alpha}, train_norm={lokr_train_norm}")
-
-        return model
-
-
-    # ======lora分支======
+    """Apply adapter (LyCORIS LoRA or LyCORIS LoKR) to model"""
+    # 获取配置参数
+    lora_rank = config['Model'].get('lora_rank', 32)
+    lora_alpha = config['Model'].get('lora_alpha', lora_rank)
+    lora_dropout = config['Model'].get('lora_dropout', 0.05)
+    train_norm=config['Model'].get('train_norm', False)
+    weight_decompose=config['Model'].get('weight_decompose', False)
+    
+    # 获取目标模块
     default_target_modules = [
         "attention.qkv",
         "attention.out",
@@ -920,37 +848,62 @@ def setup_lora(model, config):
         "time_text_embed.1",
         "clip_text_pooled_proj.1",
     ]
+    target_modules = config['Model'].get('lora_target_modules') or default_target_modules
 
-    lora_rank = config['Model'].get('lora_rank')
-    lora_alpha = config['Model'].get('lora_alpha', lora_rank)
-    lora_target_modules = config['Model'].get('lora_target_modules') or default_target_modules
-    lora_dropout = config['Model'].get('lora_dropout', 0.05)
+    # --- LyCORIS 配置设置 ---
+    # 转换目标模块名称为 LyCORIS 支持的 regex/fnmatch 格式
+    target_patterns = []
+    for name in target_modules:
+        if "*" in name or "?" in name:
+            target_patterns.append(name)
+        else:
+            target_patterns.append(f"*{name}") # 添加通配符以匹配全路径
 
-    lora_config = LoraConfig(
-        r=lora_rank,
-        lora_alpha=lora_alpha,
-        target_modules=lora_target_modules,
-        lora_dropout=lora_dropout,
-        bias="none"
+    # 应用 LyCORIS 预设
+    LycorisNetwork.apply_preset({
+        "enable_conv": False, 
+        "target_module": [],
+        "target_name": target_patterns,
+        "use_fnmatch": True,
+        "exclude_name": [],
+    })
+    
+    # 初始化 LyCORIS 网络
+    network = LycorisNetwork(
+        model,
+        multiplier=1.0,
+        lora_dim=lora_rank,
+        conv_lora_dim=lora_rank,
+        alpha=lora_alpha,
+        conv_alpha=lora_alpha, 
+        dropout=lora_dropout,
+        network_module="lora",
+        train_norm=train_norm,
+        weight_decompose=weight_decompose,
     )
+    
+    # 应用到模型
+    network.apply_to()
+    # 将网络移动到正确的设备
+    device = next(model.parameters()).device
+    network.to(device)
 
-    peft_model = get_peft_model(model, lora_config)
+    model._adapter_type = "lyco_lora" 
+    model._lycoris_network = network
+    model._adapter_rank = lora_rank
+    model._adapter_alpha = lora_alpha
 
-    # 同样给 LoRA 分支也挂 rank/alpha，后面存 metadata 时用
-    peft_model._adapter_type = "lora"
-    peft_model._adapter_rank = lora_rank
-    peft_model._adapter_alpha = lora_alpha
-
-    trainable_params = sum(p.numel() for p in peft_model.parameters() if p.requires_grad)
-    total_params = sum(p.numel() for p in peft_model.parameters())
+    # 打印统计信息
+    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    total_params = sum(p.numel() for p in model.parameters())
     logger.info(
-        f"LoRA applied: {trainable_params/1e6:.2f}M/{total_params/1e6:.2f}M trainable "
+        f"LyCORIS LoRA applied: {trainable_params/1e6:.2f}M/{total_params/1e6:.2f}M trainable "
         f"({trainable_params/total_params*100:.2f}%)"
     )
-    logger.info(f"  Target modules: {lora_target_modules}")
-    logger.info(f"  LoRA rank={lora_rank}, alpha={lora_alpha}")
-
-    return peft_model
+    logger.info(f"  Target patterns: {target_patterns}")
+    logger.info(f"  LoRA rank={lora_rank}, alpha={lora_alpha}, train_norm={train_norm}, weight_decompose={weight_decompose}")
+    
+    return model
 
 
 def setup_optimizer(model, config):
@@ -1642,6 +1595,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
