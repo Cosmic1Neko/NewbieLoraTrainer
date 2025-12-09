@@ -883,7 +883,6 @@ def setup_lora(model, config):
         network_module='lora',
         train_norm=train_norm,
         weight_decompose=weight_decompose,
-        factor=config['Model'].get('lokr_factor', -1),
     )
     
     # 应用到模型
@@ -1569,6 +1568,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
