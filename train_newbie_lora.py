@@ -867,6 +867,9 @@ def setup_lora(model, config):
         "use_fnmatch": True,
         "exclude_name": [],
     })
+
+    # 冻结原始模型参数
+    model.requires_grad_(False)
     
     # 初始化 LyCORIS 网络
     network = LycorisNetwork(
@@ -877,9 +880,10 @@ def setup_lora(model, config):
         alpha=lora_alpha,
         conv_alpha=lora_alpha, 
         dropout=lora_dropout,
-        network_module="lora",
+        network_module='lora',
         train_norm=train_norm,
         weight_decompose=weight_decompose,
+        factor=config['Model'].get('lokr_factor', -1),
     )
     
     # 应用到模型
@@ -1184,15 +1188,12 @@ def load_checkpoint(accelerator, model, optimizer, scheduler, config):
     adapter_state = checkpoint.get("adapter_state_dict") or checkpoint.get("lora_state_dict")
     if adapter_state is None:
         raise RuntimeError("No adapter_state_dict found in checkpoint")
-    if adapter_type == "lyco_lokr":
+   else:
         lyco_net = getattr(unwrapped, "_lycoris_network", None)
         if lyco_net is None:
             raise RuntimeError("LyCORIS network not initialized???")
         lyco_net.load_state_dict(adapter_state)
-        logger.info("Loaded LyCORIS LoKr state dict from checkpoint")
-    else:
-        set_peft_model_state_dict(unwrapped, adapter_state)
-        logger.info("Loaded LoRA state dict from checkpoint")
+        logger.info("Loaded LyCORIS LoRA state dict from checkpoint")
     optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
     scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
     logger.info(f"Resumed from step {checkpoint['step']}")
@@ -1568,6 +1569,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
