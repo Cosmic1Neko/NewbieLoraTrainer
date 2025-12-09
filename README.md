@@ -17,7 +17,7 @@ If you are already using Newbie inference models, this trainer will help you qui
 
 ---
 
-#  Fork Features
+##  Fork Features
 
 1. 使用[EQ-VAE](https://huggingface.co/Anzhc/MS-LC-EQ-D-VR_VAE)替换原来的Flux VAE，且修改VAE nn.conv2d的padding_mode为"reflect" (避免图像边缘问题) 
 2. 实现原始Lumina Image 2.0的多分辨率函数（原分辨率loss -> 原分辨率loss + 4倍下采样loss），可能有助于图像全局结构的维持但增加了训练成本
