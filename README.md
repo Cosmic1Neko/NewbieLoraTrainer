@@ -19,9 +19,13 @@ If you are already using Newbie inference models, this trainer will help you qui
 
 #  Fork Features
 
-1. 使用[EQ-VAE](https://huggingface.co/Anzhc/MS-LC-EQ-D-VR_VAE)替换原来的Flux VAE，且修改VAE nn.conv2d的padding_mode为"reflect" https://github.com/Cosmic1Neko/Lumina2-LoRA-trainer/blob/d301b7fbffe1c3b3025a4c4713d6ac93edf8ab6a/sd-scripts/library/flux_models.py#L326-L330
-2. 实现原始Lumina Image 2.0的多分辨率函数（原分辨率loss -> 原分辨率loss + 4倍下采样loss），代价是失去“differential output preservation”功能 https://github.com/Cosmic1Neko/Lumina2-LoRA-trainer/blob/d578e5778b5b960f97f06c60b91b8b58a2095915/sd-scripts/lumina_train_network.py#L436-L437
-3. 修改源代码使得gemma2_max_token_length最大支持数300 -> 1280 + 50 https://github.com/Cosmic1Neko/Lumina2-LoRA-trainer/blob/2e410fb1c5406264dc1aebb615579341fbf896a9/sd-scripts/library/lumina_models.py#L143
+1. 使用[EQ-VAE](https://huggingface.co/Anzhc/MS-LC-EQ-D-VR_VAE)替换原来的Flux VAE，且修改VAE nn.conv2d的padding_mode为"reflect" (避免图像边缘问题) 
+2. 实现原始Lumina Image 2.0的多分辨率函数（原分辨率loss -> 原分辨率loss + 4倍下采样loss），可能有助于图像全局结构的维持但增加了训练成本
+3. 修复`time_shift`函数的潜在问题，保证时间步t能根据图像分辨率正确shift，而不是根据固定的`resolution`进行shift
+4. 删除了基于PEFT LoRA和LYCORIS LoKr微调功能。取而代之的是，使用LYCORIS的LoRA作为默认的微调方式，并添加开启`DoRA`的参数
+5. 更改了use_cache的行为，默认只缓存图像latent而不缓存text embedding
+6. 增加了dropout_caption_rate(无条件生成训练，有利于CFG)和shuffle_caption等有用的caption处理功能
+7. 增加了gradient_accumulation功能，使得更大批次的训练成为可能
 
 ---
 
