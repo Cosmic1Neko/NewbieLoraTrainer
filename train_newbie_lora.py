@@ -1079,22 +1079,17 @@ def compute_loss(model, vae, text_encoder, tokenizer, clip_model, clip_tokenizer
 
 
 def save_checkpoint(accelerator, model, optimizer, scheduler, step, config):
-    """Save training checkpoint (支持 LoRA 和 LyCORIS LoKr)"""
+    """Save training checkpoint"""
     checkpoint_dir = os.path.join(config['Model']['output_dir'], "checkpoints")
     os.makedirs(checkpoint_dir, exist_ok=True)
     checkpoint_path = os.path.join(checkpoint_dir, f"checkpoint_{step}.pt")
     unwrapped = accelerator.unwrap_model(model)
     adapter_type = getattr(unwrapped, "_adapter_type", "lora")
-    if adapter_type == "lyco_lokr":
-        lyco_net = getattr(unwrapped, "_lycoris_network", None)
-        if lyco_net is None:
-            raise RuntimeError("LyCORIS network not initialized")
-        adapter_state = {k: v.detach().cpu() for k, v in lyco_net.state_dict().items()}
-    else:
-        adapter_state = {
-            k: v.detach().cpu()
-            for k, v in get_peft_model_state_dict(unwrapped).items()
-        }
+
+    lyco_net = getattr(unwrapped, "_lycoris_network", None)
+    if lyco_net is None:
+        raise RuntimeError("LyCORIS network not initialized")
+    adapter_state = {k: v.detach().cpu() for k, v in lyco_net.state_dict().items()}
     checkpoint = {
         "step": step,
         "adapter_type": adapter_type,      
@@ -1108,7 +1103,7 @@ def save_checkpoint(accelerator, model, optimizer, scheduler, step, config):
 
 
 def save_lora_model(accelerator, model, config, step=None):
-    """Save adapter weights（同时支持 LoRA 和 LyCORIS LoKr），两种都用“目录结构”保存"""
+    """Save adapter weights，两种都用“目录结构”保存"""
     output_dir = config['Model']['output_dir']
     output_name = config['Model']['output_name']
     os.makedirs(output_dir, exist_ok=True)
@@ -1117,75 +1112,59 @@ def save_lora_model(accelerator, model, config, step=None):
     adapter_type = getattr(unwrapped, "_adapter_type", "lora")
 
     # ===== LyCORIS LoKr 分支 =====
-    if adapter_type == "lyco_lokr":
-        lyco_net = getattr(unwrapped, "_lycoris_network", None)
-        if lyco_net is None:
-            raise RuntimeError("LyCORIS network not initialized")
+    lyco_net = getattr(unwrapped, "_lycoris_network", None)
+    if lyco_net is None:
+        raise RuntimeError("LyCORIS network not initialized")
 
-        # 和 LoRA 一样：建一个目录，而不是直接写 .safetensors 文件
-        save_dir = os.path.join(output_dir, f"{output_name}_step_{step}" if step else output_name)
-        os.makedirs(save_dir, exist_ok=True)
-
-        # 权重文件名也对齐 LoRA：adapter_model.safetensors
-        weights_path = os.path.join(save_dir, "adapter_model.safetensors")
-
-        if accelerator.is_main_process:
-            lokr_rank = config['Model'].get('lokr_rank', getattr(unwrapped, "_adapter_rank", None))
-            lokr_alpha = config['Model'].get('lokr_alpha', getattr(unwrapped, "_adapter_alpha", None))
-
-            # 写入 safetensors + metadata
-            metadata = {"adapter_type": "lyco_lokr"}
-            if lokr_rank is not None:
-                metadata["lora_rank"] = str(lokr_rank)
-            if lokr_alpha is not None:
-                metadata["lora_alpha"] = str(lokr_alpha)
-
-            lyco_net.save_weights(weights_path, dtype=None, metadata=metadata)
-            logger.info(
-                f"LyCORIS LoKr model saved: {weights_path} "
-                f"(adapter_type=lyco_lokr, rank={lokr_rank}, alpha={lokr_alpha})"
-            )
-
-            # adapter_config.json 也放在目录里，名字对齐 peft 风格
-            cfg = {
-                "adapter_type": "lyco_lokr",
-                "peft_type": "LYCORIS",
-                "lycoris_type": "lokr",
-            }
-            if lokr_rank is not None:
-                try:
-                    r = int(lokr_rank)
-                except Exception:
-                    r = lokr_rank
-                cfg["r"] = r
-                cfg["network_dim"] = r
-            if lokr_alpha is not None:
-                try:
-                    a = float(lokr_alpha)
-                except Exception:
-                    a = lokr_alpha
-                cfg["lora_alpha"] = a
-                cfg["network_alpha"] = a
-
-            json_path = os.path.join(save_dir, "adapter_config.json")
-            with open(json_path, "w", encoding="utf-8") as f:
-                json.dump(cfg, f, ensure_ascii=False, indent=2)
-            logger.info(f"LoKr adapter_config.json saved: {json_path}")
-
-        return  # LoKr 保存完直接返回
-
-    # ===== LoRA 分支（保持原来的 save_pretrained 逻辑）=====
+    # 和 LoRA 一样：建一个目录，而不是直接写 .safetensors 文件
     save_dir = os.path.join(output_dir, f"{output_name}_step_{step}" if step else output_name)
+    os.makedirs(save_dir, exist_ok=True)
 
-    unwrapped.save_pretrained(
-        save_dir,
-        is_main_process=accelerator.is_main_process,
-        state_dict=accelerator.get_state_dict(model),
-    )
+    # 权重文件名也对齐 LoRA：adapter_model.safetensors
+    weights_path = os.path.join(save_dir, "adapter_model.safetensors")
 
     if accelerator.is_main_process:
-        logger.info(f"LoRA model saved: {save_dir}")
+        lora_rank = config['Model'].get('lora_rank', getattr(unwrapped, "_adapter_rank", None))
+        lora_alpha = config['Model'].get('lora_alpha', getattr(unwrapped, "_adapter_alpha", None))
 
+        # 写入 safetensors + metadata
+        metadata = {"adapter_type": "lyco_lora"}
+        if lora_rank is not None:
+            metadata["lora_rank"] = str(lora_rank)
+        if lora_alpha is not None:
+            metadata["lora_alpha"] = str(lora_alpha)
+
+        lyco_net.save_weights(weights_path, dtype=None, metadata=metadata)
+        logger.info(
+            f"LyCORIS LoRA model saved: {weights_path} "
+            f"(adapter_type=lyco_lora, rank={lora_rank}, alpha={lora_alpha})"
+        )
+
+        # adapter_config.json 也放在目录里，名字对齐 peft 风格
+        cfg = {
+            "adapter_type": "lyco_lora",
+            "peft_type": "LYCORIS",
+            "lycoris_type": "lora",
+        }
+        if lora_rank is not None:
+            try:
+                r = int(lora_rank)
+            except Exception:
+                r = lora_rank
+            cfg["r"] = r
+            cfg["network_dim"] = r
+        if lora_alpha is not None:
+            try:
+                a = float(lora_alpha)
+            except Exception:
+                a = lora_alpha
+            cfg["lora_alpha"] = a
+            cfg["network_alpha"] = a
+
+        json_path = os.path.join(save_dir, "adapter_config.json")
+        with open(json_path, "w", encoding="utf-8") as f:
+            json.dump(cfg, f, ensure_ascii=False, indent=2)
+        logger.info(f"Lora adapter_config.json saved: {json_path}")
 
 def load_checkpoint(accelerator, model, optimizer, scheduler, config):
     checkpoint_dir = os.path.join(config['Model']['output_dir'], "checkpoints")
@@ -1592,6 +1571,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
