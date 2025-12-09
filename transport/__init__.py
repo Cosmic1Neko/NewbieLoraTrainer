@@ -64,7 +64,7 @@ def create_transport(
         sample_eps=sample_eps,
         snr_type=snr_type,
         do_shift=do_shift,
-        seq_len=seq_len,
+        #seq_len=seq_len,
     )
 
     return state
