@@ -30,10 +30,7 @@ from tqdm import tqdm
 import re
 import random
 
-try:
-    from lycoris.wrapper import LycorisNetwork
-except ImportError:
-    LycorisNetwork = None
+from lycoris.wrapper import LycorisNetwork
 
 sys.path.insert(0, str(Path(__file__).parent))
 import models
@@ -862,7 +859,7 @@ def setup_lora(model, config):
     # 应用 LyCORIS 预设
     LycorisNetwork.apply_preset({
         "enable_conv": False, 
-        "target_module": [],
+        "target_module": ["Linear"],
         "target_name": target_patterns,
         "use_fnmatch": True,
         "exclude_name": [],
@@ -876,9 +873,7 @@ def setup_lora(model, config):
         model,
         multiplier=1.0,
         lora_dim=lora_rank,
-        conv_lora_dim=lora_rank,
         alpha=lora_alpha,
-        conv_alpha=lora_alpha, 
         dropout=lora_dropout,
         network_module='lora',
         train_norm=train_norm,
@@ -1568,6 +1563,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
