@@ -76,7 +76,7 @@ class ImageCaptionDataset(Dataset):
         gemma3_prompt: str = "",
         min_bucket_reso: int = 256,
         max_bucket_reso: int = 2048,
-        bucket_reso_step: int = 64,
+        bucket_reso_step: int = 32,
         shuffle_caption: bool = False,
         keep_tokens_separator: str = "|||",
         enable_wildcard: bool = False,
@@ -1546,6 +1546,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
