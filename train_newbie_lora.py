@@ -623,12 +623,13 @@ def load_encoders_only(config):
         vae_path = config['Model'].get('vae_path', 'stabilityai/sdxl-vae')
         vae = AutoencoderKL.from_pretrained(vae_path, torch_dtype=torch.float32, trust_remote_code=trust_remote_code)
 
-    logger.info("Enabling 'reflect' padding for VAE")
-    for module in vae.modules():
-        if isinstance(module, torch.nn.Conv2d):
-            pad_h, pad_w = module.padding if isinstance(module.padding, tuple) else (module.padding, module.padding)
-            if pad_h > 0 or pad_w > 0:
-                module.padding_mode = "reflect"
+    if config['Model'].get('vae_reflect_padding', false):
+        logger.info("Enabling 'reflect' padding for VAE")
+        for module in vae.modules():
+            if isinstance(module, torch.nn.Conv2d):
+                pad_h, pad_w = module.padding if isinstance(module.padding, tuple) else (module.padding, module.padding)
+                if pad_h > 0 or pad_w > 0:
+                    module.padding_mode = "reflect"
     vae.eval()
     vae.requires_grad_(False)
     text_encoder.eval()
@@ -1563,6 +1564,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
