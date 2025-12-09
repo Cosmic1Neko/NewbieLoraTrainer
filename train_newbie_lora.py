@@ -623,7 +623,7 @@ def load_encoders_only(config):
         vae_path = config['Model'].get('vae_path', 'stabilityai/sdxl-vae')
         vae = AutoencoderKL.from_pretrained(vae_path, torch_dtype=torch.float32, trust_remote_code=trust_remote_code)
 
-    if config['Model'].get('vae_reflect_padding', false):
+    if config['Model'].get('vae_reflect_padding', False):
         logger.info("Enabling 'reflect' padding for VAE")
         for module in vae.modules():
             if isinstance(module, torch.nn.Conv2d):
@@ -1165,7 +1165,7 @@ def load_checkpoint(accelerator, model, optimizer, scheduler, config):
     adapter_state = checkpoint.get("adapter_state_dict") or checkpoint.get("lora_state_dict")
     if adapter_state is None:
         raise RuntimeError("No adapter_state_dict found in checkpoint")
-   else:
+    else:
         lyco_net = getattr(unwrapped, "_lycoris_network", None)
         if lyco_net is None:
             raise RuntimeError("LyCORIS network not initialized???")
@@ -1546,6 +1546,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
