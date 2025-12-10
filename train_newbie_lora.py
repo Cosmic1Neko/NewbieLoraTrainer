@@ -828,7 +828,7 @@ def load_model_and_tokenizer(config):
 
 
 def setup_lora(model, config):
-    """Apply adapter (LyCORIS LoRA or LyCORIS LoKR) to model"""
+    """Apply adapter (PEFT) to model"""
     # 获取配置参数
     lora_rank = config['Model'].get('lora_rank', 32)
     lora_alpha = config['Model'].get('lora_alpha', lora_rank)
@@ -1473,6 +1473,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
