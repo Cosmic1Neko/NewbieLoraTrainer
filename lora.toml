@@ -114,13 +114,13 @@ lora_rank = 128
 lora_alpha = 128
 
 # LoRA dropout
-#推荐0.05-0.1
-lora_dropout = 0.05
+# 推荐0.05-0.1
+lora_dropout = 0.0
 
 # 是否训练标准层
 train_norm = true
 
-# 是否启用DoRA
+# 是否启用DoRA，启用时建议关闭lora_dropout提升性能
 use_dora = true
 
 # LoRA权重初始化方式
@@ -167,6 +167,7 @@ gradient_clip_norm = 1.0
 
 # FlashAttention-2 优化
 use_flash_attention_2 = true
+
 
 
 
