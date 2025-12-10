@@ -125,7 +125,8 @@ use_dora = true
 
 # 是否启用rsLoRA
 # 修改LoRA缩放为lora_alpha / r -> lora_alpha / math.sqrt(r)
-# 本质是解耦了 学习率 / lora_rank / lora_alpha 间的关系
+# 本质是解耦了 学习率 与 lora_rank 间的关系
+# 避免了当`scale = 1`，当 r 变大时，△W (LoRA)的数值幅度和梯度的大小变大，隐式地提高了学习率的问题
 use_rslora = true
 
 # LoRA权重初始化方式
@@ -172,6 +173,7 @@ gradient_clip_norm = 1.0
 
 # FlashAttention-2 优化
 use_flash_attention_2 = true
+
 
 
 
