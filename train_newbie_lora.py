@@ -834,6 +834,7 @@ def setup_lora(model, config):
     lora_alpha = config['Model'].get('lora_alpha', lora_rank)
     lora_dropout = config['Model'].get('lora_dropout', 0.05)
     use_dora=config['Model'].get('use_dora', False)
+    use_rslora=config['Model'].get('use_rslora', False)
     init_lora_weights=config['Model'].get('init_lora_weights', True)
     train_norm=config['Model'].get('train_norm', False)
     
@@ -855,6 +856,7 @@ def setup_lora(model, config):
         bias="none",
         task_type=None,
         use_dora=use_dora,
+        use_rslora=use_rslora,
         init_lora_weights=init_lora_weights
     )
     
@@ -1473,6 +1475,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
