@@ -121,7 +121,15 @@ lora_dropout = 0.05
 train_norm = true
 
 # 是否启用DoRA
-weight_decompose = true
+use_dora = true
+
+# LoRA权重初始化方式
+# 常见选项: 
+#  true        - 默认 (LoRA B=0, A=Kaiming/Gaussian)
+#  "gaussian"  - 全部高斯分布初始化
+#  "pissa"     - Principal Singular values and Singular vectors Adaptation (收敛更快)
+#  "olora"     - OLoRA 初始化 (正交初始化)
+init_lora_weights = "pissa"
 
 # =============================================================================
 # LoRA 目标模块配置
@@ -159,6 +167,7 @@ gradient_clip_norm = 1.0
 
 # FlashAttention-2 优化
 use_flash_attention_2 = true
+
 
 
 
