@@ -22,7 +22,7 @@ If you are already using Newbie inference models, this trainer will help you qui
 1. 使用[EQ-VAE](https://huggingface.co/Anzhc/MS-LC-EQ-D-VR_VAE)替换原来的Flux VAE，且修改VAE nn.conv2d的padding_mode为"reflect" (避免图像边缘问题) 。
 2. 实现原始Lumina Image 2.0的多分辨率函数（原分辨率loss -> 原分辨率loss + 4倍下采样loss），可能有助于图像全局结构的维持但增加了训练成本。
 3. 修复`do_shift`的潜在问题，保证时间步t能根据图像分辨率正确shift，而不是根据固定的`resolution`进行shift。
-4. 删除了PEFT LoRA和LYCORIS LoKr微调功能。取而代之的是，使用LYCORIS的LoRA作为默认的微调方式，并添加开启`DoRA`的参数。
+4. 删除LYCORIS LoKr微调功能。取而代之的是，全面使用PEFT库进行LoRA微调，并添加开启`DoRA`的参数。
 5. 更改了use_cache的行为，默认只缓存图像latent而不缓存text embedding。
 6. 增加了dropout_caption_rate(无条件生成训练，有利于CFG)和shuffle_caption等有用的caption处理功能。
 7. 增加了gradient_accumulation功能，使得更大批次的训练成为可能。
