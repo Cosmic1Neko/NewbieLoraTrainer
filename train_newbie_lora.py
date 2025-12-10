@@ -30,8 +30,6 @@ from tqdm import tqdm
 import re
 import random
 
-from lycoris.wrapper import LycorisNetwork
-
 sys.path.insert(0, str(Path(__file__).parent))
 import models
 from transport import create_transport
@@ -848,61 +846,30 @@ def setup_lora(model, config):
     ]
     target_modules = config['Model'].get('lora_target_modules') or default_target_modules
 
-    # --- LyCORIS 配置设置 ---
-    # 转换目标模块名称为 LyCORIS 支持的 regex/fnmatch 格式
-    target_patterns = []
-    for name in target_modules:
-        if "*" in name or "?" in name:
-            target_patterns.append(name)
-        else:
-            target_patterns.append(f"*{name}") # 添加通配符以匹配全路径
-
-    # 应用 LyCORIS 预设
-    LycorisNetwork.apply_preset({
-        "enable_conv": False, 
-        "target_module": ["Linear"],
-        "target_name": target_patterns,
-        "use_fnmatch": True,
-        "exclude_name": [],
-    })
-
-    # 冻结原始模型参数
-    model.requires_grad_(False)
-    
-    # 初始化 LyCORIS 网络
-    network = LycorisNetwork(
-        model,
-        multiplier=1.0,
-        lora_dim=lora_rank,
-        alpha=lora_alpha,
-        dropout=lora_dropout,
-        network_module='lora',
-        train_norm=train_norm,
-        weight_decompose=weight_decompose,
+    lora_config = LoraConfig(
+        r=lora_rank,
+        lora_alpha=lora_alpha,
+        target_modules=target_modules,
+        lora_dropout=lora_dropout,
+        bias="none",
     )
     
-    # 应用到模型
-    network.apply_to()
-    # 将网络移动到正确的设备
-    device = next(model.parameters()).device
-    network.to(device)
+    peft_model = get_peft_model(model, lora_config)
 
-    model._adapter_type = "lyco_lora" 
-    model._lycoris_network = network
-    model._adapter_rank = lora_rank
-    model._adapter_alpha = lora_alpha
+    peft_model._adapter_type = "lora"
+    peft_model._adapter_rank = lora_rank
+    peft_model._adapter_alpha = lora_alpha
 
-    # 打印统计信息
-    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    total_params = sum(p.numel() for p in model.parameters())
+    trainable_params = sum(p.numel() for p in peft_model.parameters() if p.requires_grad)
+    total_params = sum(p.numel() for p in peft_model.parameters())
     logger.info(
-        f"LyCORIS LoRA applied: {trainable_params/1e6:.2f}M/{total_params/1e6:.2f}M trainable "
+        f"LoRA applied: {trainable_params/1e6:.2f}M/{total_params/1e6:.2f}M trainable "
         f"({trainable_params/total_params*100:.2f}%)"
     )
-    logger.info(f"  Target patterns: {target_patterns}")
-    logger.info(f"  LoRA rank={lora_rank}, alpha={lora_alpha}, train_norm={train_norm}, weight_decompose={weight_decompose}")
-    
-    return model
+    logger.info(f"  Target modules: {lora_target_modules}")
+    logger.info(f"  LoRA rank={lora_rank}, alpha={lora_alpha}")
+
+    return peft_model
 
 
 def setup_optimizer(model, config):
@@ -912,7 +879,7 @@ def setup_optimizer(model, config):
     adapter_type = getattr(model, "_adapter_type", "lora")
     weight_decay = config['Optimization'].get('weight_decay', 0.01)
 
-    trainable_params = model._lycoris_network.prepare_optimizer_params(learning_rate)
+    trainable_params = [p for p in model.parameters() if p.requires_grad]
 
     adam_kwargs = {"lr": learning_rate, "betas": (0.9, 0.999), "eps": 1e-8, "weight_decay": weight_decay}
 
@@ -1067,10 +1034,10 @@ def save_checkpoint(accelerator, model, optimizer, scheduler, step, config):
     unwrapped = accelerator.unwrap_model(model)
     adapter_type = getattr(unwrapped, "_adapter_type", "lora")
 
-    lyco_net = getattr(unwrapped, "_lycoris_network", None)
-    if lyco_net is None:
-        raise RuntimeError("LyCORIS network not initialized")
-    adapter_state = {k: v.detach().cpu() for k, v in lyco_net.state_dict().items()}
+    adapter_state = {
+        k: v.detach().cpu()
+        for k, v in get_peft_model_state_dict(unwrapped).items()
+    }
     checkpoint = {
         "step": step,
         "adapter_type": adapter_type,      
@@ -1089,60 +1056,19 @@ def save_lora_model(accelerator, model, config, step=None):
     output_name = config['Model']['output_name']
     os.makedirs(output_dir, exist_ok=True)
 
-    unwrapped = accelerator.unwrap_model(model)
-    adapter_type = getattr(unwrapped, "_adapter_type", "lora")
-
-    lyco_net = getattr(unwrapped, "_lycoris_network", None)
-    if lyco_net is None:
-        raise RuntimeError("LyCORIS network not initialized")
-
     save_dir = os.path.join(output_dir, f"{output_name}_step_{step}" if step else output_name)
     os.makedirs(save_dir, exist_ok=True)
 
-    weights_path = os.path.join(save_dir, "adapter_model.safetensors")
+    unwrapped = accelerator.unwrap_model(model)
+    unwrapped.save_pretrained(
+        save_dir,
+        is_main_process=accelerator.is_main_process,
+        state_dict=accelerator.get_state_dict(model), 
+        safe_serialization=True
+    )
 
     if accelerator.is_main_process:
-        lora_rank = config['Model'].get('lora_rank', getattr(unwrapped, "_adapter_rank", None))
-        lora_alpha = config['Model'].get('lora_alpha', getattr(unwrapped, "_adapter_alpha", None))
-
-        # 写入 safetensors + metadata
-        metadata = {"adapter_type": "lyco_lora"}
-        if lora_rank is not None:
-            metadata["lora_rank"] = str(lora_rank)
-        if lora_alpha is not None:
-            metadata["lora_alpha"] = str(lora_alpha)
-
-        lyco_net.save_weights(weights_path, dtype=None, metadata=metadata)
-        logger.info(
-            f"LyCORIS LoRA model saved: {weights_path} "
-            f"(adapter_type=lyco_lora, rank={lora_rank}, alpha={lora_alpha})"
-        )
-
-        # adapter_config.json 也放在目录里，名字对齐 peft 风格
-        cfg = {
-            "adapter_type": "lyco_lora",
-            "peft_type": "LYCORIS",
-            "lycoris_type": "lora",
-        }
-        if lora_rank is not None:
-            try:
-                r = int(lora_rank)
-            except Exception:
-                r = lora_rank
-            cfg["r"] = r
-            cfg["network_dim"] = r
-        if lora_alpha is not None:
-            try:
-                a = float(lora_alpha)
-            except Exception:
-                a = lora_alpha
-            cfg["lora_alpha"] = a
-            cfg["network_alpha"] = a
-
-        json_path = os.path.join(save_dir, "adapter_config.json")
-        with open(json_path, "w", encoding="utf-8") as f:
-            json.dump(cfg, f, ensure_ascii=False, indent=2)
-        logger.info(f"Lora adapter_config.json saved: {json_path}")
+        logger.info(f"PEFT LoRA model saved to: {save_dir}")
 
 def load_checkpoint(accelerator, model, optimizer, scheduler, config):
     checkpoint_dir = os.path.join(config['Model']['output_dir'], "checkpoints")
@@ -1166,11 +1092,8 @@ def load_checkpoint(accelerator, model, optimizer, scheduler, config):
     if adapter_state is None:
         raise RuntimeError("No adapter_state_dict found in checkpoint")
     else:
-        lyco_net = getattr(unwrapped, "_lycoris_network", None)
-        if lyco_net is None:
-            raise RuntimeError("LyCORIS network not initialized???")
-        lyco_net.load_state_dict(adapter_state)
-        logger.info("Loaded LyCORIS LoRA state dict from checkpoint")
+        set_peft_model_state_dict(unwrapped, adapter_state)
+        logger.info("Loaded PEFT LoRA state dict from checkpoint")
     optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
     scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
     logger.info(f"Resumed from step {checkpoint['step']}")
@@ -1546,6 +1469,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
