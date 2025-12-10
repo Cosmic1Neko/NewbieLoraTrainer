@@ -833,8 +833,9 @@ def setup_lora(model, config):
     lora_rank = config['Model'].get('lora_rank', 32)
     lora_alpha = config['Model'].get('lora_alpha', lora_rank)
     lora_dropout = config['Model'].get('lora_dropout', 0.05)
+    use_dora=config['Model'].get('use_dora', False)
+    init_lora_weights=config['Model'].get('init_lora_weights', True)
     train_norm=config['Model'].get('train_norm', False)
-    weight_decompose=config['Model'].get('weight_decompose', False)
     
     # 获取目标模块
     default_target_modules = [
@@ -852,6 +853,9 @@ def setup_lora(model, config):
         target_modules=target_modules,
         lora_dropout=lora_dropout,
         bias="none",
+        task_type=None,
+        use_dora=use_dora,
+        init_lora_weights=init_lora_weights
     )
     
     peft_model = get_peft_model(model, lora_config)
@@ -1469,6 +1473,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
