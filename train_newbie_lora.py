@@ -872,7 +872,7 @@ def setup_lora(model, config):
         f"LoRA applied: {trainable_params/1e6:.2f}M/{total_params/1e6:.2f}M trainable "
         f"({trainable_params/total_params*100:.2f}%)"
     )
-    logger.info(f"  Target modules: {lora_target_modules}")
+    logger.info(f"  Target modules: {target_modules}")
     logger.info(f"  LoRA rank={lora_rank}, alpha={lora_alpha}")
 
     return peft_model
@@ -1480,6 +1480,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
