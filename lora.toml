@@ -136,9 +136,9 @@ use_rslora = true
 # 常见选项: 
 #  true        - 默认 (LoRA B=0, A=Kaiming/Gaussian)
 #  "gaussian"  - 全部高斯分布初始化
-#  "pissa"     - Principal Singular values and Singular vectors Adaptation (收敛更快)
+#  "pissa"     - Principal Singular values and Singular vectors Adaptation (收敛更快), "pissa_niter_[number of iters]"格式使用快速SVD
 #  "olora"     - OLoRA 初始化 (正交初始化)
-init_lora_weights = "pissa"
+init_lora_weights = "pissa_niter_4"
 
 # =============================================================================
 # LoRA 目标模块配置
@@ -176,6 +176,7 @@ gradient_clip_norm = 1.0
 
 # FlashAttention-2 优化
 use_flash_attention_2 = true
+
 
 
 
