@@ -61,6 +61,9 @@ use_cache = true
 # Gemma3 系统提示词（仅用于 Gemma3，不影响 Jina CLIP）
 gemma3_prompt = "You are an assistant designed to generate high-quality anime images with the highest degree of image-text alignment based on textual prompts. <Prompt Start>\n"
 
+# wandb的api key, 用于查看训练损失与过程 
+wandb_key = ""
+
 # =============================================================================
 # 训练超参数
 # =============================================================================
@@ -173,6 +176,7 @@ gradient_clip_norm = 1.0
 
 # FlashAttention-2 优化
 use_flash_attention_2 = true
+
 
 
 
