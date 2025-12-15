@@ -603,7 +603,7 @@ def load_encoders_only(config):
 
         vae_path = os.path.join(base_model_path, "vae")
         vae = AutoencoderKL.from_pretrained(
-            vae_path if os.path.exists(vae_path) else "stabilityai/sdxl-vae",
+            vae_path if os.path.exists(vae_path) else "black-forest-labs/FLUX.1-dev",
             torch_dtype=torch.float32,
             trust_remote_code=trust_remote_code
         )
@@ -1480,6 +1480,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
