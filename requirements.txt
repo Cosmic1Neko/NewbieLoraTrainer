@@ -9,4 +9,5 @@ toml>=0.10.2
 Pillow>=10.2.0
 huggingface-hub>=0.20.0
 torchdiffeq>=0.2.0
+wandb
 timm
