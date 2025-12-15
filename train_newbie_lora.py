@@ -1339,11 +1339,16 @@ def main():
     session_start_step = start_step
 
     if accelerator.is_main_process:
-        accelerator.init_trackers(
-            project_name="Newbie-LoRA",
-            config=config,
-            init_kwargs={"wandb": {"name": config['Model']['output_name']}}
-        )
+        wandb_key = config['Model'].get('wandb_key')
+        if wandb_key:
+            try:
+                import wandb
+                wandb.login(key=wandb_key)
+                logger.info("Successfully logged into WandB using config token.")
+            except ImportError:
+                logger.warning("wandb not installed, skipping login.")
+            except Exception as e:
+                logger.warning(f"Failed to login to WandB: {e}")
 
     start_time = datetime.now()
     max_grad_norm = config['Optimization'].get('gradient_clip_norm', 1.0)
@@ -1475,6 +1480,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
