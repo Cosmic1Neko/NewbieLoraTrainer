@@ -25,6 +25,7 @@ from diffusers import AutoencoderKL
 from diffusers.optimization import get_scheduler
 from transformers import AutoTokenizer, AutoModel, AutoConfig
 from peft import LoraConfig, get_peft_model, PeftModel, get_peft_model_state_dict, set_peft_model_state_dict
+from peft.tuners.lora import initialize_lora_eva_weights
 from safetensors.torch import load_file, save_file
 from tqdm import tqdm
 import re
@@ -54,6 +55,69 @@ def apply_average_pool(latent, factor=4):
         torch.Tensor: Downsampled latent tensor.
     """
     return torch.nn.functional.avg_pool2d(latent, kernel_size=factor, stride=factor)
+
+def get_eva_batch_generator(dataloader, device, vae, text_encoder, tokenizer, clip_model, clip_tokenizer, gemma3_prompt, dtype, num_steps=20):
+    """
+    生成用于 EVA 初始化的数据 Batch。
+    模拟 compute_loss 中的预处理，并添加噪声以匹配 Rectified Flow 的输入分布。
+    """
+    iter_loader = iter(dataloader)
+    
+    for _ in range(num_steps):
+        try:
+            batch = next(iter_loader)
+        except StopIteration:
+            iter_loader = iter(dataloader)
+            batch = next(iter_loader)
+            
+        # 1. 准备 Latents 和 Caption Embeddings (复制 compute_loss 的部分逻辑)
+        if batch.get("cached", False):
+            latents = batch["latents"].to(device, dtype=dtype)
+            captions = batch["captions"]
+        else:
+            pixel_values = batch["pixel_values"].to(device, dtype=dtype)
+            captions = batch["captions"]
+            with torch.no_grad():
+                # VAE Encode
+                latents = vae.encode(pixel_values).latent_dist.sample()
+                scaling_factor = getattr(vae.config, 'scaling_factor', 0.13025)
+                latents = latents * scaling_factor
+
+        batch_size = latents.shape[0]
+
+        with torch.no_grad():
+            # Gemma Text Encode
+            gemma_texts = [gemma3_prompt + cap if gemma3_prompt else cap for cap in captions]
+            gemma_inputs = tokenizer(
+                gemma_texts, padding=True, pad_to_multiple_of=8,
+                truncation=True, max_length=1280, return_tensors="pt"
+            ).to(device)
+            gemma_outputs = text_encoder(**gemma_inputs, output_hidden_states=True)
+            cap_feats = gemma_outputs.hidden_states[-2].to(dtype=dtype)
+            cap_mask = gemma_inputs.attention_mask.to(device)
+            
+            # CLIP Text Encode
+            clip_inputs = clip_tokenizer(
+                captions, padding=True, truncation=True,
+                max_length=2048, return_tensors="pt"
+            ).to(device)
+            clip_text_pooled = clip_model.get_text_features(**clip_inputs).to(dtype=dtype)
+
+        # 2. 模拟加噪 (Rectified Flow / Flux 训练时的输入是含噪的)
+        # 使用简单的线性插值模拟: x_t = (1-t)*x + t*noise
+        t = torch.rand((batch_size,), device=device, dtype=dtype).view(-1, 1, 1, 1)
+        noise = torch.randn_like(latents)
+        x_noisy = (1 - t) * latents + t * noise
+
+        # 3. 返回匹配 model.forward 参数的字典
+        # NextDiT forward: x, t, cap_feats, cap_mask, clip_text_pooled(in kwargs)
+        yield {
+            "x": x_noisy,
+            "t": t,
+            "cap_feats": cap_feats,
+            "cap_mask": cap_mask,
+            "clip_text_pooled": clip_text_pooled
+        }
 
 class ImageCaptionDataset(Dataset):
     """图像-文本对数据集，支持 kohya_ss 风格目录重复"""
@@ -1275,10 +1339,6 @@ def main():
         model.gradient_checkpointing_enable()
         logger.info("Gradient checkpointing enabled")
 
-    print_memory_usage("Before LoRA", args.profiler)
-    model = setup_lora(model, config)
-    print_memory_usage("After LoRA", args.profiler)
-
     # 检查是否使用了 PiSSA 初始化
     init_lora_weights = config['Model'].get('init_lora_weights', True)
     # 确保 init_lora_weights 是字符串并且以 "pissa" 开头 (例如 "pissa" 或 "pissa_niter_4")
@@ -1326,6 +1386,40 @@ def main():
             persistent_workers=True if num_workers > 0 else False,
             prefetch_factor=2 if num_workers > 0 else None
         )
+
+    print_memory_usage("Before LoRA", args.profiler)
+    model = setup_lora(model, config)
+    print_memory_usage("After LoRA", args.profiler)
+
+    # 执行 EVA 初始化
+    init_method = config['Model'].get('init_lora_weights', True)
+    if init_method == "eva" and accelerator.is_main_process:
+        logger.info("Initializing LoRA weights with EVA (Explained Variance Adaptation)...")
+        
+        # 准备模型的数据类型
+        target_dtype = torch.bfloat16 if mixed_precision == 'bf16' else (torch.float16 if mixed_precision == 'fp16' else torch.float32)
+        
+        # 创建数据生成器
+        data_gen = get_eva_batch_generator(
+            dataloader=train_dataloader,
+            device=accelerator.device,
+            vae=vae,
+            text_encoder=text_encoder,
+            tokenizer=tokenizer,
+            clip_model=clip_model,
+            clip_tokenizer=clip_tokenizer,
+            gemma3_prompt=gemma3_prompt,
+            dtype=target_dtype,
+            num_steps=config['Model'].get('eva_num_steps', 0)
+        )
+        
+        # 执行初始化
+        initialize_lora_eva_weights(model, data_gen)
+        
+        logger.info("EVA initialization complete.")
+        
+        # 等待所有进程同步（如果使用 DDP）
+        accelerator.wait_for_everyone()
 
     optimizer = setup_optimizer(model, config)
     scheduler, num_training_steps = setup_scheduler(optimizer, config, train_dataloader)
@@ -1512,6 +1606,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
