@@ -124,7 +124,7 @@ lora_dropout = 0.0
 train_norm = true
 
 # 是否启用DoRA，启用时建议关闭lora_dropout提升性能，与pissa权重初始化不兼容
-use_dora = true
+use_dora = false
 
 # 是否启用rsLoRA
 # 修改LoRA缩放为lora_alpha / r -> lora_alpha / math.sqrt(r)
@@ -176,6 +176,7 @@ gradient_clip_norm = 1.0
 
 # FlashAttention-2 优化
 use_flash_attention_2 = true
+
 
 
 
