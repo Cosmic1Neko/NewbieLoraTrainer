@@ -56,7 +56,7 @@ def apply_average_pool(latent, factor=4):
     """
     return torch.nn.functional.avg_pool2d(latent, kernel_size=factor, stride=factor)
 
-def get_eva_batch_generator(dataloader, device, vae, text_encoder, tokenizer, clip_model, clip_tokenizer, gemma3_prompt, dtype, num_steps=20):
+def get_eva_batch_generator(dataloader, device, vae, text_encoder, tokenizer, clip_model, clip_tokenizer, gemma3_prompt, dtype, num_steps=100):
     """
     生成用于 EVA 初始化的数据 Batch。
     模拟 compute_loss 中的预处理，并添加噪声以匹配 Rectified Flow 的输入分布。
@@ -1420,7 +1420,7 @@ def main():
             clip_tokenizer=clip_tokenizer,
             gemma3_prompt=gemma3_prompt,
             dtype=target_dtype,
-            num_steps=config['Model'].get('eva_num_steps', 0)
+            num_steps=100
         )
         
         # 执行初始化
@@ -1616,6 +1616,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
