@@ -140,10 +140,7 @@ use_rslora = true
 #  "pissa"     - Principal Singular values and Singular vectors Adaptation (收敛更快), "pissa_niter_[number of iters]"格式使用快速SVD
 #  "olora"     - OLoRA 初始化 (正交初始化)
 #  "eva"       - EVA 初始化，需要正向传播，基于训练数据进行初始化。支持Dora
-init_lora_weights = "pissa_niter_4"
-
-# "eva"初始化下正向传播的步数
-eva_num_steps = 30
+init_lora_weights = "eva"
 
 # =============================================================================
 # LoRA 目标模块配置
@@ -181,6 +178,7 @@ gradient_clip_norm = 1.0
 
 # FlashAttention-2 优化
 use_flash_attention_2 = true
+
 
 
 
