@@ -24,7 +24,7 @@ from accelerate.utils import set_seed
 from diffusers import AutoencoderKL
 from diffusers.optimization import get_scheduler
 from transformers import AutoTokenizer, AutoModel, AutoConfig
-from peft import LoraConfig, get_peft_model, PeftModel, get_peft_model_state_dict, set_peft_model_state_dict
+from peft import LoraConfig, get_peft_model, PeftModel, get_peft_model_state_dict, set_peft_model_state_dict, EvaConfig
 from peft.tuners.lora import initialize_lora_eva_weights
 from safetensors.torch import load_file, save_file
 from tqdm import tqdm
@@ -901,6 +901,11 @@ def setup_lora(model, config):
     use_rslora=config['Model'].get('use_rslora', False)
     init_lora_weights=config['Model'].get('init_lora_weights', True)
     train_norm=config['Model'].get('train_norm', False)
+
+    # EVA
+    eva_config = None
+    if init_lora_weights == "eva":
+        eva_config = EvaConfig(rho=1.0)
     
     # 获取目标模块
     default_target_modules = [
@@ -921,7 +926,8 @@ def setup_lora(model, config):
         task_type=None,
         use_dora=use_dora,
         use_rslora=use_rslora,
-        init_lora_weights=init_lora_weights
+        init_lora_weights=init_lora_weights,
+        eva_config=eva_config,
     )
     
     peft_model = get_peft_model(model, lora_config, low_cpu_mem_usage=True)
@@ -1389,6 +1395,10 @@ def main():
 
     print_memory_usage("Before LoRA", args.profiler)
     model = setup_lora(model, config)
+    model.to(accelerator.device)
+    if text_encoder: text_encoder.to(accelerator.device)
+    if vae: vae.to(accelerator.device)
+    if clip_model: clip_model.to(accelerator.device)
     print_memory_usage("After LoRA", args.profiler)
 
     # 执行 EVA 初始化
@@ -1606,6 +1616,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
