@@ -123,7 +123,8 @@ lora_dropout = 0.0
 # 是否训练标准层
 train_norm = true
 
-# 是否启用DoRA，启用时建议关闭lora_dropout提升性能，与pissa权重初始化不兼容
+# 是否启用DoRA，启用时建议关闭lora_dropout提升性能
+# 注意，与pissa等非随机初始化不兼容
 use_dora = false
 
 # 是否启用rsLoRA
@@ -176,6 +177,7 @@ gradient_clip_norm = 1.0
 
 # FlashAttention-2 优化
 use_flash_attention_2 = true
+
 
 
 
