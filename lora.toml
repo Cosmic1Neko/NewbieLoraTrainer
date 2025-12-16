@@ -96,7 +96,7 @@ lr_warmup_steps = 500
 # 梯度检查点
 gradient_checkpointing = true
 # 梯度累积
-gradient_accumulation_steps = 4
+gradient_accumulation_steps = 16
 
 # 混合精度训练
 # 可选值：
@@ -181,6 +181,7 @@ gradient_clip_norm = 1.0
 
 # FlashAttention-2 优化
 use_flash_attention_2 = true
+
 
 
 
