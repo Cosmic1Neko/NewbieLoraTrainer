@@ -924,7 +924,7 @@ def setup_lora(model, config):
         init_lora_weights=init_lora_weights
     )
     
-    peft_model = get_peft_model(model, lora_config)
+    peft_model = get_peft_model(model, lora_config, low_cpu_mem_usage=True)
 
     peft_model._adapter_type = "lora"
     peft_model._adapter_rank = lora_rank
@@ -1606,6 +1606,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
