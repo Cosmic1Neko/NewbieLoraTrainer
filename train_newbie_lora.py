@@ -24,7 +24,7 @@ from accelerate.utils import set_seed
 from diffusers import AutoencoderKL
 from diffusers.optimization import get_scheduler
 from transformers import AutoTokenizer, AutoModel, AutoConfig
-from peft import LoraConfig, get_peft_model, PeftModel, get_peft_model_state_dict, set_peft_model_state_dict, EvaConfig
+from peft import LoraConfig, get_peft_model, PeftModel, get_peft_model_state_dict, set_peft_model_state_dict, EvaConfig, initialize_lora_eva_weights
 from peft.tuners.lora import initialize_lora_eva_weights
 from safetensors.torch import load_file, save_file
 from tqdm import tqdm
@@ -107,7 +107,7 @@ def get_eva_batch_generator(dataloader, device, vae, text_encoder, tokenizer, cl
         # 使用简单的线性插值模拟: x_t = (1-t)*x + t*noise
         t = torch.rand((batch_size,), device=device, dtype=dtype).view(-1, 1, 1, 1)
         noise = torch.randn_like(latents)
-        x_noisy = (1 - t) * latents + t * noise
+        x_noisy = t * latents + (1 - t) * noise
 
         # 3. 返回匹配 model.forward 参数的字典
         # NextDiT forward: x, t, cap_feats, cap_mask, clip_text_pooled(in kwargs)
@@ -1404,7 +1404,7 @@ def main():
         
         # 等待所有进程同步（如果使用 DDP）
         accelerator.wait_for_everyone()
-    else if init_method.startswith("pissa"):
+    elif init_method.startswith("pissa"):
         # 为PiSSA初始化保存初始权重
         # 定义初始权重保存路径
         pissa_init_dir = os.path.join(config['Model']['output_dir'], "pissa_init")
@@ -1613,6 +1613,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
