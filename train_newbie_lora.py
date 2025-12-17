@@ -910,7 +910,7 @@ def setup_lora(model, config):
         eva_config=eva_config,
     )
     
-    peft_model = get_peft_model(model, lora_config, low_cpu_mem_usage=True)
+    peft_model = get_peft_model(model, lora_config, low_cpu_mem_usage=False)
 
     peft_model._adapter_type = "lora"
     peft_model._adapter_rank = lora_rank
@@ -1606,6 +1606,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
