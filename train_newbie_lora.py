@@ -82,8 +82,7 @@ def get_eva_batch_generator(dataloader, device, vae, text_encoder, tokenizer, cl
                 scaling_factor = getattr(vae.config, 'scaling_factor', 0.13025)
                 latents = latents * scaling_factor
 
-        batch_size = latents.shape[0]
-
+        # 2. 准备 Text Embeddings
         with torch.no_grad():
             # Gemma Text Encode
             gemma_texts = [gemma3_prompt + cap if gemma3_prompt else cap for cap in captions]
@@ -102,17 +101,21 @@ def get_eva_batch_generator(dataloader, device, vae, text_encoder, tokenizer, cl
             ).to(device)
             clip_text_pooled = clip_model.get_text_features(**clip_inputs).to(dtype=dtype)
 
-        # 2. 模拟加噪 (Rectified Flow / Flux 训练时的输入是含噪的)
-        # 使用简单的线性插值模拟: x_t = (1-t)*x + t*noise
-        t = torch.rand((batch_size,), device=device, dtype=dtype).view(-1, 1, 1, 1)
-        noise = torch.randn_like(latents)
-        x_noisy = t * latents + (1 - t) * noise
+        # 3. 使用 Transport 进行加噪
+        # transport.sample 会处理 Logit-Normal 分布采样和 Resolution-aware Time Shifting
+        # latents 在这里即 transport 中的 x1 (数据点)
+        with torch.no_grad():
+            # 采样时间步 t 和噪声 x0
+            t, x0, x1 = transport.sample(latents)
+            
+            # 根据 Path (通常是 Linear) 计算加噪后的输入 xt
+            # xt = t * x1 + (1 - t) * x0  (注意 transport 内部具体的实现可能略有不同，调用 plan 最稳妥)
+            t, xt, ut = transport.path_sampler.plan(t, x0, x1)
 
-        # 3. 返回匹配 model.forward 参数的字典
-        # NextDiT forward: x, t, cap_feats, cap_mask, clip_text_pooled(in kwargs)
+        # 4. 返回匹配 model.forward 参数的字典
         yield {
-            "x": x_noisy,
-            "t": t,
+            "x": xt.to(dtype), # 确保 dtype 正确
+            "t": t.to(dtype),
             "cap_feats": cap_feats,
             "cap_mask": cap_mask,
             "clip_text_pooled": clip_text_pooled
@@ -1629,6 +1632,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
