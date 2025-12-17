@@ -337,49 +337,54 @@ class ImageCaptionDataset(Dataset):
             logger.info("All cache files found")
 
     def _generate_buckets(self):
+        """
+        使用 sd-scripts 风格的动态分箱策略
+        不再局限于预设的 5 个长宽比，而是根据 max_area 和 bucket_reso_step 动态生成所有可能的 bucket
+        """
         max_reso = self.resolution
-        max_tokens = (max_reso / 16) * (max_reso / 16)
         max_area = max_reso * max_reso
 
+        # 确保步长和最小尺寸合法
         assert self.bucket_reso_step % 8 == 0, "bucket_reso_step must be divisible by 8"
         assert self.min_bucket_reso % 8 == 0, "min_bucket_reso must be divisible by 8"
         assert self.max_bucket_reso % 8 == 0, "max_bucket_reso must be divisible by 8"
 
-        aspect_ratios = [(1, 1), (3, 4), (4, 3), (9, 16), (16, 9)]
         buckets = set()
 
-        def quantize(value: int) -> int:
-            value = max(self.min_bucket_reso, min(self.max_bucket_reso, value))
-            value = max(self.bucket_reso_step, (value // self.bucket_reso_step) * self.bucket_reso_step)
-            return value
+        # 1. 添加正方形 Bucket
+        # 计算理论上的最大正方形边长
+        sq_side = int(math.sqrt(max_area) // self.bucket_reso_step) * self.bucket_reso_step
+        # 限制在允许的范围内
+        sq_side = max(self.min_bucket_reso, min(self.max_bucket_reso, sq_side))
+        buckets.add((sq_side, sq_side))
 
-        for ar_w, ar_h in aspect_ratios:
-            scale = math.sqrt(max_area / (ar_w * ar_h))
-            width = int(scale * ar_w)
-            height = int(scale * ar_h)
+        # 2. 动态生成各种长宽比的 Bucket
+        # 逻辑：遍历所有可能的宽度，计算对应的最大高度
+        width = self.min_bucket_reso
+        while width <= self.max_bucket_reso:
+            # 根据面积恒定公式 area = w * h => h = area / w
+            height = int((max_area // width) // self.bucket_reso_step) * self.bucket_reso_step
+            
+            # 限制高度不超过最大分辨率
+            height = min(self.max_bucket_reso, height)
 
-            width = quantize(width)
-            height = quantize(height)
+            # 如果高度也符合最小限制，则添加该 bucket (以及它的转置)
+            if height >= self.min_bucket_reso:
+                buckets.add((width, height))
+                buckets.add((height, width))
 
-            # Reduce the dominant side if rounding pushed the area over the limit.
-            while width * height > max_area and (width > self.min_bucket_reso or height > self.min_bucket_reso):
-                if width >= height and width > self.min_bucket_reso:
-                    width = max(self.min_bucket_reso, width - self.bucket_reso_step)
-                elif height > self.min_bucket_reso:
-                    height = max(self.min_bucket_reso, height - self.bucket_reso_step)
-                else:
-                    break
+            # 增加宽度步长
+            width += self.bucket_reso_step
 
-            buckets.add((width, height))
-
+        # 排序并初始化
         self.bucket_resolutions = sorted(list(buckets), key=lambda x: x[0] / x[1])
         self.buckets = {}
         for reso in self.bucket_resolutions:
             self.buckets[reso] = []
 
         logger.info(
-            f"Generated {len(self.bucket_resolutions)} fixed buckets with max {max_tokens:.0f} tokens "
-            f"and area limit {max_area}"
+            f"Generated {len(self.bucket_resolutions)} dynamic buckets "
+            f"(max_area: {max_area}, step: {self.bucket_reso_step}, min: {self.min_bucket_reso}, max: {self.max_bucket_reso})"
         )
         logger.info(f"Bucket resolutions: {self.bucket_resolutions}")
 
@@ -1612,6 +1617,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
