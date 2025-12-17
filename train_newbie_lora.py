@@ -58,7 +58,7 @@ def apply_average_pool(latent, factor=4):
 def get_eva_batch_generator(dataloader, device, vae, text_encoder, tokenizer, clip_model, clip_tokenizer, gemma3_prompt, dtype, num_steps=100):
     """
     生成用于 EVA 初始化的数据 Batch。
-    模拟 compute_loss 中的预处理，并添加噪声以匹配 Rectified Flow 的输入分布。
+    使用 transport 对象来确保噪声分布(Logit-Normal)和时间偏移(Time Shift)与训练时完全一致。
     """
     iter_loader = iter(dataloader)
     
@@ -107,14 +107,11 @@ def get_eva_batch_generator(dataloader, device, vae, text_encoder, tokenizer, cl
         with torch.no_grad():
             # 采样时间步 t 和噪声 x0
             t, x0, x1 = transport.sample(latents)
-            
-            # 根据 Path (通常是 Linear) 计算加噪后的输入 xt
-            # xt = t * x1 + (1 - t) * x0  (注意 transport 内部具体的实现可能略有不同，调用 plan 最稳妥)
             t, xt, ut = transport.path_sampler.plan(t, x0, x1)
 
         # 4. 返回匹配 model.forward 参数的字典
         yield {
-            "x": xt.to(dtype), # 确保 dtype 正确
+            "x": xt.to(dtype),
             "t": t.to(dtype),
             "cap_feats": cap_feats,
             "cap_mask": cap_mask,
@@ -1632,6 +1629,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
