@@ -1408,6 +1408,7 @@ def main():
             tokenizer=tokenizer,
             clip_model=clip_model,
             clip_tokenizer=clip_tokenizer,
+            transport=transport,
             gemma3_prompt=gemma3_prompt,
             dtype=target_dtype,
             num_steps=100
@@ -1629,6 +1630,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
