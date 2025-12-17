@@ -92,7 +92,7 @@ def main():
       "use_quant_conv": false
     }
     vae = AutoencoderKL.from_single_file(
-        args.vae_path, 
+        'https://huggingface.co/Anzhc/MS-LC-EQ-D-VR_VAE/blob/main/Pad Flux EQ v2 B1.safetensors' , 
         config=config, 
         subfolder="vae"
     )
