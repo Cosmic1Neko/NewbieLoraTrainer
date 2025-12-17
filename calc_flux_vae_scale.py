@@ -2,6 +2,13 @@
 """
 计算 FLUX VAE 的 scaling_factor 和 shift_factor 并保存为 Diffusers 格式。
 基于 NewbieLoraTrainer 的数据处理逻辑。
+Example:
+python calc_flux_vae_scale.py \
+  --train_data_dir /path/to/your/images \
+  --vae_path /path/to/flux_vae.safetensors \
+  --output_dir /path/to/save/diffusers_vae \
+  --resolution 1024 \
+  --batch_size 4
 """
 
 import os
