@@ -304,30 +304,6 @@ class ImageCaptionDataset(Dataset):
                             "width": torch.tensor(target_width),
                             "height": torch.tensor(target_height)
                         }, vae_cache)
-
-                        """
-                        with torch.autocast(device_type='cuda', dtype=self.dtype):
-                            gemma_text = self.gemma3_prompt + caption if self.gemma3_prompt else caption
-                            gemma_inputs = self.tokenizer(
-                                [gemma_text], padding=True, pad_to_multiple_of=8,
-                                truncation=True, max_length=1280, return_tensors="pt"
-                            ).to(self.device)
-                            gemma_outputs = self.text_encoder(**gemma_inputs, output_hidden_states=True)
-                            cap_feats = gemma_outputs.hidden_states[-2].squeeze(0).to(dtype=self.dtype).cpu()
-                            cap_mask = gemma_inputs.attention_mask.squeeze(0).cpu()
-
-                            clip_inputs = self.clip_tokenizer(
-                                [caption], padding=True, truncation=True,
-                                max_length=2048, return_tensors="pt"
-                            ).to(self.device)
-                            clip_text_pooled = self.clip_model.get_text_features(**clip_inputs).squeeze(0).to(dtype=self.dtype).cpu()
-
-                        save_file({
-                            "cap_feats": cap_feats,
-                            "cap_mask": cap_mask,
-                            "clip_text_pooled": clip_text_pooled
-                        }, text_cache)
-                        """
                         
                     except Exception as e:
                         logger.error(f"Cache error for {image_path}: {e}")
@@ -1630,6 +1606,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
