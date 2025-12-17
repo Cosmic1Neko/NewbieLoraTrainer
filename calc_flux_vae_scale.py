@@ -11,6 +11,12 @@ python calc_flux_vae_scale.py \
   --batch_size 4
 """
 
+#!/usr/bin/env python3
+"""
+计算 FLUX VAE 的 scaling_factor 和 shift_factor 并保存为 Diffusers 格式。
+基于 NewbieLoraTrainer 的数据处理逻辑。
+"""
+
 import os
 import argparse
 import json
@@ -47,18 +53,49 @@ def main():
     print(f"Loading VAE from: {args.vae_path}")
     
     # 加载单文件 VAE
-    # 注意：FLUX VAE 通常是 AutoencoderKL 架构
-    try:
-        vae = AutoencoderKL.from_single_file(args.vae_path)
-    except Exception as e:
-        print(f"Error loading VAE: {e}")
-        print("尝试手动指定 config (假设是 FLUX.1-dev 结构)...")
-        # 如果自动加载失败，尝试从 HuggingFace 拉取标准 config
-        vae = AutoencoderKL.from_single_file(
-            args.vae_path, 
-            config="black-forest-labs/FLUX.1-dev", 
-            subfolder="vae"
-        )
+    config = {
+      "_class_name": "AutoencoderKL",
+      "_diffusers_version": "0.30.0.dev0",
+      "_name_or_path": "../checkpoints/flux-dev",
+      "act_fn": "silu",
+      "block_out_channels": [
+        128,
+        256,
+        512,
+        512
+      ],
+      "down_block_types": [
+        "DownEncoderBlock2D",
+        "DownEncoderBlock2D",
+        "DownEncoderBlock2D",
+        "DownEncoderBlock2D"
+      ],
+      "force_upcast": true,
+      "in_channels": 3,
+      "latent_channels": 16,
+      "latents_mean": null,
+      "latents_std": null,
+      "layers_per_block": 2,
+      "mid_block_add_attention": true,
+      "norm_num_groups": 32,
+      "out_channels": 3,
+      "sample_size": 1024,
+      "scaling_factor": 0.3611,
+      "shift_factor": 0.1159,
+      "up_block_types": [
+        "UpDecoderBlock2D",
+        "UpDecoderBlock2D",
+        "UpDecoderBlock2D",
+        "UpDecoderBlock2D"
+      ],
+      "use_post_quant_conv": false,
+      "use_quant_conv": false
+    }
+    vae = AutoencoderKL.from_single_file(
+        args.vae_path, 
+        config=config, 
+        subfolder="vae"
+    )
     
     vae.to(device)
     vae.eval()
