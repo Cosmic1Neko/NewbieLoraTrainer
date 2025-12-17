@@ -1341,32 +1341,6 @@ def main():
     )
     logger.info(f"Rectified Flow transport created.")
 
-    if config['Model'].get('gradient_checkpointing', True):
-        model.gradient_checkpointing_enable()
-        logger.info("Gradient checkpointing enabled")
-
-    # 检查是否使用了 PiSSA 初始化
-    init_lora_weights = config['Model'].get('init_lora_weights', True)
-    # 确保 init_lora_weights 是字符串并且以 "pissa" 开头 (例如 "pissa" 或 "pissa_niter_4")
-    if isinstance(init_lora_weights, str) and init_lora_weights.startswith("pissa"):
-        # 定义初始权重保存路径
-        pissa_init_dir = os.path.join(config['Model']['output_dir'], "pissa_init")
-        # 将路径存入 config 以便后续 save_lora_model 使用
-        config['Model']['pissa_init_dir'] = pissa_init_dir
-        
-        # 仅在主进程保存，避免多进程冲突
-        if accelerator.is_main_process:
-            if not os.path.exists(pissa_init_dir):
-                logger.info(f"Detected PiSSA initialization. Saving initial state to {pissa_init_dir} for later conversion...")
-                # 保存未训练的初始 LoRA 权重 (A_0, B_0)
-                # 注意：这里需要 unwrap 或者是直接用 model (如果是 PeftModel)
-                model.save_pretrained(pissa_init_dir)
-            else:
-                logger.info(f"PiSSA initial state already exists at {pissa_init_dir}")
-        
-        # 等待主进程保存完毕
-        accelerator.wait_for_everyone()
-
     num_workers = config['Model'].get('dataloader_num_workers', 4)
     batch_size = config['Model']['train_batch_size']
 
@@ -1392,7 +1366,7 @@ def main():
             persistent_workers=True if num_workers > 0 else False,
             prefetch_factor=2 if num_workers > 0 else None
         )
-
+        
     print_memory_usage("Before LoRA", args.profiler)
     model = setup_lora(model, config)
     model.to(accelerator.device)
@@ -1400,7 +1374,7 @@ def main():
     if vae: vae.to(accelerator.device)
     if clip_model: clip_model.to(accelerator.device)
     print_memory_usage("After LoRA", args.profiler)
-
+    
     # 执行 EVA 初始化
     init_method = config['Model'].get('init_lora_weights', True)
     if init_method == "eva" and accelerator.is_main_process:
@@ -1430,6 +1404,29 @@ def main():
         
         # 等待所有进程同步（如果使用 DDP）
         accelerator.wait_for_everyone()
+    else if init_method.startswith("pissa"):
+        # 为PiSSA初始化保存初始权重
+        # 定义初始权重保存路径
+        pissa_init_dir = os.path.join(config['Model']['output_dir'], "pissa_init")
+        # 将路径存入 config 以便后续 save_lora_model 使用
+        config['Model']['pissa_init_dir'] = pissa_init_dir
+        
+        # 仅在主进程保存，避免多进程冲突
+        if accelerator.is_main_process:
+            if not os.path.exists(pissa_init_dir):
+                logger.info(f"Detected PiSSA initialization. Saving initial state to {pissa_init_dir} for later conversion...")
+                # 保存未训练的初始 LoRA 权重 (A_0, B_0)
+                # 注意：这里需要 unwrap 或者是直接用 model (如果是 PeftModel)
+                model.save_pretrained(pissa_init_dir)
+            else:
+                logger.info(f"PiSSA initial state already exists at {pissa_init_dir}")
+        
+        # 等待主进程保存完毕
+        accelerator.wait_for_everyone()
+
+    if config['Model'].get('gradient_checkpointing', True):
+        model.gradient_checkpointing_enable()
+        logger.info("Gradient checkpointing enabled")
 
     optimizer = setup_optimizer(model, config)
     scheduler, num_training_steps = setup_scheduler(optimizer, config, train_dataloader)
@@ -1616,6 +1613,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
