@@ -25,7 +25,6 @@ from diffusers import AutoencoderKL
 from diffusers.optimization import get_scheduler
 from transformers import AutoTokenizer, AutoModel, AutoConfig
 from peft import LoraConfig, get_peft_model, PeftModel, get_peft_model_state_dict, set_peft_model_state_dict, EvaConfig, initialize_lora_eva_weights
-from peft.tuners.lora import initialize_lora_eva_weights
 from safetensors.torch import load_file, save_file
 from tqdm import tqdm
 import re
@@ -1613,6 +1612,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
