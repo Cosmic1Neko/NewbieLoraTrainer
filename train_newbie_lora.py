@@ -1229,9 +1229,9 @@ def main():
     cache_dtype = torch.bfloat16 if mixed_precision == 'bf16' else (torch.float16 if mixed_precision == 'fp16' else torch.float32)
     gemma3_prompt = config['Model'].get('gemma3_prompt', '')
     resolution = config['Model']['resolution']
-    min_bucket_reso = config['Model'].get('min_bucket_reso', 256),
-    max_bucket_reso = config['Model'].get('max_bucket_reso', 2048),
-    bucket_reso_step = config['Model'].get('max_bucket_reso', 64),
+    min_bucket_reso = config['Model'].get('min_bucket_reso', 256)
+    max_bucket_reso = config['Model'].get('max_bucket_reso', 2048)
+    bucket_reso_step = config['Model'].get('bucket_reso_step', 64)
     shuffle_caption = config['Model'].get('shuffle_caption', False)
     keep_tokens_separator = config['Model'].get('keep_tokens_separator', "|||")
     enable_wildcard = config['Model'].get('enable_wildcard', False)
@@ -1629,6 +1629,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
