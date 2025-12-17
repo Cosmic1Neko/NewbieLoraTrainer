@@ -55,7 +55,7 @@ def apply_average_pool(latent, factor=4):
     """
     return torch.nn.functional.avg_pool2d(latent, kernel_size=factor, stride=factor)
 
-def get_eva_batch_generator(dataloader, device, vae, text_encoder, tokenizer, clip_model, clip_tokenizer, gemma3_prompt, dtype, num_steps=100):
+def get_eva_batch_generator(dataloader, device, vae, text_encoder, tokenizer, clip_model, clip_tokenizer, transport, gemma3_prompt, dtype, num_steps=100):
     """
     生成用于 EVA 初始化的数据 Batch。
     使用 transport 对象来确保噪声分布(Logit-Normal)和时间偏移(Time Shift)与训练时完全一致。
@@ -1630,6 +1630,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
