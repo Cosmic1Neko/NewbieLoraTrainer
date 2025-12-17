@@ -1361,11 +1361,20 @@ def main():
         
     print_memory_usage("Before LoRA", args.profiler)
     model = setup_lora(model, config)
-    for param in model.parameters():
-        if param.device.type == 'meta':
-            # 将 meta tensor 实体化为 CPU 上的随机张量
-            # 这里的数值并不重要，因为稍后 EVA 会覆盖它们
-            param.data = torch.empty_like(param, device='cpu').normal_(0, 0.01)
+    for name, module in model.named_modules():
+        for param_name, param in module.named_parameters(recurse=False):
+            if param.device.type == 'meta':
+                # 1. 在 CPU 上创建一个实体张量 (保持原本的 dtype)
+                materialized_data = torch.empty_like(param, device='cpu').normal_(0, 0.01)
+                
+                # 2. 创建一个新的 nn.Parameter
+                new_param = torch.nn.Parameter(
+                    materialized_data, 
+                    requires_grad=param.requires_grad
+                )
+                
+                # 3. 直接替换掉 module 中的原 Parameter
+                setattr(module, param_name, new_param)
     model.to(accelerator.device)
     if text_encoder: text_encoder.to(accelerator.device)
     if vae: vae.to(accelerator.device)
@@ -1611,6 +1620,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
