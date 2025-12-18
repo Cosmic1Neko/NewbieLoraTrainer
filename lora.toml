@@ -146,7 +146,7 @@ use_rslora = true
 #  "eva"       - EVA 初始化，需要正向传播，基于训练数据进行初始化。支持Dora
 init_lora_weights = "eva"
 # 使用eva初始化时使用多少批数据
-eva_num_steps = 50
+eva_num_batches = 50
 eva_tau = 0.3
 
 # =============================================================================
@@ -185,6 +185,7 @@ gradient_clip_norm = 1.0
 
 # FlashAttention-2 优化
 use_flash_attention_2 = true
+
 
 
 
