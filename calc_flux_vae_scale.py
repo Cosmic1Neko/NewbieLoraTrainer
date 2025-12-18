@@ -2,13 +2,23 @@
 """
 计算 FLUX VAE 的 scaling_factor 和 shift_factor 并保存为 Diffusers 格式。
 基于 NewbieLoraTrainer 的数据处理逻辑。
+
+功能：
+1. 遍历数据集，通过 VAE 编码图像。
+2. 统计 Latent 的全局均值 (Shift) 和标准差 (Std)。
+3. 计算 Scaling Factor = 1 / Std。
+4. 更新 VAE 的 config.json 并保存。
+
+修改说明：已移除单通道 (Per-Channel) 统计计算，仅计算全局统计量。
+
 Example:
 python calc_flux_vae_scale.py \
   --train_data_dir /path/to/your/images \
   --vae_path /path/to/flux_vae.safetensors \
   --output_dir /path/to/save/diffusers_vae \
   --resolution 1024 \
-  --batch_size 4
+  --batch_size 4 \
+  --vae_reflect_padding
 """
 
 import os
@@ -21,185 +31,193 @@ from tqdm import tqdm
 from diffusers import AutoencoderKL
 from accelerate.utils import set_seed
 
-# 从 train_newbie_lora 导入数据集类和整理函数
+# 尝试从 train_newbie_lora 导入数据集类，如果失败则尝试相对路径
 try:
     from train_newbie_lora import ImageCaptionDataset, collate_fn
 except ImportError:
-    raise ImportError("请将此脚本放在 train_newbie_lora.py 同级目录下运行。")
+    import sys
+    sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+    try:
+        from train_newbie_lora import ImageCaptionDataset, collate_fn
+    except ImportError:
+        raise ImportError("请确保 train_newbie_lora.py 在同一目录下或 Python 路径中。")
 
 def parse_args():
-  parser = argparse.ArgumentParser(description="Calculate VAE scaling and shift factors")
-  parser.add_argument("--train_data_dir", type=str, required=True, help="训练数据集目录")
-  parser.add_argument("--vae_path", type=str, required=True, help="单文件 VAE (.safetensors) 路径")
-  parser.add_argument("--output_dir", type=str, required=True, help="输出 Diffusers VAE 的目录")
-  parser.add_argument("--resolution", type=int, default=1024, help="计算时使用的分辨率 (默认 1024)")
-  parser.add_argument("--batch_size", type=int, default=1, help="Batch size (建议 1-4，取决于显存)")
-  parser.add_argument("--num_workers", type=int, default=4, help="DataLoader workers")
-  parser.add_argument("--max_samples", type=int, default=None, help="最大采样图片数 (None 为使用全部)")
-  parser.add_argument("--enable_bucket", action="store_true", help="启用分桶 (通常计算 scale 时建议关闭 bucket 以保持一致性，但在 NewbieLoraTrainer 中默认开启)")
-  return parser.parse_args()
+    parser = argparse.ArgumentParser(description="Calculate VAE scaling and shift factors for Flux (Global Only)")
+    parser.add_argument("--train_data_dir", type=str, required=True, help="训练数据集目录")
+    parser.add_argument("--vae_path", type=str, required=True, help="单文件 VAE (.safetensors) 路径或 Diffusers 模型目录")
+    parser.add_argument("--output_dir", type=str, required=True, help="输出 Diffusers VAE 的目录")
+    parser.add_argument("--resolution", type=int, default=1024, help="计算时使用的分辨率 (默认 1024)")
+    parser.add_argument("--batch_size", type=int, default=1, help="Batch size (建议 1-4)")
+    parser.add_argument("--num_workers", type=int, default=4, help="DataLoader workers")
+    parser.add_argument("--max_samples", type=int, default=None, help="最大采样图片数 (None 为使用全部)")
+    parser.add_argument("--enable_bucket", action="store_true", help="启用分桶 (计算统计量时建议关闭 bucket 以保持一致性，但也支持开启)")
+    parser.add_argument("--vae_reflect_padding", action="store_true", help="VAE是否使用reflect_padding")
+    return parser.parse_args()
 
 def main():
-  args = parse_args()
-  set_seed(42)
-  device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    args = parse_args()
+    set_seed(42)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
-  print(f"Loading VAE from: {args.vae_path}")
+    print(f"Loading VAE from: {args.vae_path}")
     
-  # 加载单文件 VAE
-  config = {
-    "_class_name": "AutoencoderKL",
-    "_diffusers_version": "0.30.0.dev0",
-    "_name_or_path": "../checkpoints/flux-dev",
-    "act_fn": "silu",
-    "block_out_channels": [
-      128,
-      256,
-      512,
-      512
-    ],
-    "down_block_types": [
-      "DownEncoderBlock2D",
-      "DownEncoderBlock2D",
-      "DownEncoderBlock2D",
-      "DownEncoderBlock2D"
-    ],
-    "force_upcast": true,
-    "in_channels": 3,
-    "latent_channels": 16,
-    "latents_mean": null,
-    "latents_std": null,
-    "layers_per_block": 2,
-    "mid_block_add_attention": true,
-    "norm_num_groups": 32,
-    "out_channels": 3,
-    "sample_size": 1024,
-    "scaling_factor": 0.3611,
-    "shift_factor": 0.1159,
-    "up_block_types": [
-      "UpDecoderBlock2D",
-      "UpDecoderBlock2D",
-      "UpDecoderBlock2D",
-      "UpDecoderBlock2D"
-    ],
-    "use_post_quant_conv": false,
-    "use_quant_conv": false
-  }
-  vae = AutoencoderKL.from_single_file(
-      'https://huggingface.co/Anzhc/MS-LC-EQ-D-VR_VAE/blob/main/Pad Flux EQ v2 B1.safetensors' , 
-      config=config, 
-      subfolder="vae"
-  )
-    
-  vae.to(device)
-  vae.eval()
-  vae.requires_grad_(False)
-    
-  print("Initializing Dataset...")
-  # 复用 train_newbie_lora.py 中的数据集
-  # 关键参数：use_cache=False (强制实时读取图片), vae=None (防止内部缓存逻辑触发)
-  dataset = ImageCaptionDataset(
-      train_data_dir=args.train_data_dir,
-      resolution=args.resolution,
-      enable_bucket=args.enable_bucket, # 建议计算统计量时关闭 bucket 或设为 False，除非你的训练主要依靠 bucket
-      use_cache=False, 
-      vae=None,
-      device=device,
-      dtype=torch.bfloat16
-  )
-    
-  # 限制样本数量用于快速测试
-  if args.max_samples is not None and len(dataset) > args.max_samples:
-      indices = torch.randperm(len(dataset))[:args.max_samples]
-      dataset = torch.utils.data.Subset(dataset, indices)
-      print(f"Subsampled dataset to {len(dataset)} images.")
+    # 基础 Config，用于单文件加载
+    config = {
+        "_class_name": "AutoencoderKL",
+        "_diffusers_version": "0.30.0",
+        "act_fn": "silu",
+        "block_out_channels": [128, 256, 512, 512],
+        "down_block_types": [
+            "DownEncoderBlock2D", "DownEncoderBlock2D", "DownEncoderBlock2D", "DownEncoderBlock2D"
+        ],
+        "force_upcast": True,
+        "in_channels": 3,
+        "latent_channels": 16,
+        "layers_per_block": 2,
+        "mid_block_add_attention": True,
+        "norm_num_groups": 32,
+        "out_channels": 3,
+        "sample_size": 1024,
+        "scaling_factor": 1.0, # 初始占位
+        "shift_factor": 0.0,   # 初始占位
+        "up_block_types": [
+            "UpDecoderBlock2D", "UpDecoderBlock2D", "UpDecoderBlock2D", "UpDecoderBlock2D"
+        ],
+        "use_post_quant_conv": False,
+        "use_quant_conv": False
+    }
 
-  dataloader = DataLoader(
-      dataset,
-      batch_size=args.batch_size,
-      shuffle=False,
-      collate_fn=collate_fn,
-      num_workers=args.num_workers
-  )
+    try:
+        if os.path.isdir(args.vae_path):
+            vae = AutoencoderKL.from_pretrained(args.vae_path)
+        else:
+            vae = AutoencoderKL.from_single_file(
+                args.vae_path, 
+                config=config, 
+                subfolder="vae"
+            )
+    except Exception as e:
+        print(f"Error loading VAE: {e}")
+        return
 
-  print("Starting Loop to calculate Mean and Std...")
+    # 设置 Padding 模式
+    if args.vae_reflect_padding:
+        print("Enabling 'reflect' padding mode for VAE layers...")
+        for module in vae.modules():
+            if isinstance(module, torch.nn.Conv2d):
+                pad_h, pad_w = module.padding if isinstance(module.padding, tuple) else (module.padding, module.padding)
+                if pad_h > 0 or pad_w > 0:
+                    module.padding_mode = "reflect"
+
+    vae.to(device)
+    vae.eval()
+    vae.requires_grad_(False)
     
-  # Shift = Mean(Latent), Scale = 1 / Std(Latent)
-  # 计算所有 channel 共享的 scaling factor (标量) 
-  sum_x = 0.0
-  sum_x2 = 0.0
-  n_elements = 0
+    print("Initializing Dataset...")
+    dataset = ImageCaptionDataset(
+        train_data_dir=args.train_data_dir,
+        resolution=args.resolution,
+        enable_bucket=args.enable_bucket,
+        use_cache=False, 
+        vae=None,
+        device=device,
+        dtype=torch.float32 
+    )
     
-  for batch in tqdm(dataloader):
-    pixel_values = batch["pixel_values"].to(device)
+    if args.max_samples is not None and len(dataset) > args.max_samples:
+        indices = torch.randperm(len(dataset))[:args.max_samples]
+        dataset = torch.utils.data.Subset(dataset, indices)
+        print(f"Subsampled dataset to {len(dataset)} images.")
+
+    dataloader = DataLoader(
+        dataset,
+        batch_size=args.batch_size,
+        shuffle=False,
+        collate_fn=collate_fn,
+        num_workers=args.num_workers
+    )
+
+    print("Starting Loop to calculate Global Mean and Std...")
+    
+    # 初始化累加器 (使用 float64 避免精度溢出)
+    total_elements = 0
+    global_sum = 0.0
+    global_sq_sum = 0.0
+    
+    for batch in tqdm(dataloader):
+        pixel_values = batch["pixel_values"].to(device, dtype=torch.float32)
         
-    with torch.no_grad():
-        # Encode: x -> z
-        latents = vae.encode(pixel_values).latent_dist.sample()
+        with torch.no_grad():
+            # Encode: x -> z
+            latents = vae.encode(pixel_values).latent_dist.sample() 
             
-          # Latents shape: [B, C, H, W]
-          if channel_sum is None:
-              channel_sum = torch.zeros(latents.shape[1], device=device, dtype=torch.float64)
+            # Latents shape: [B, C, H, W]
             
-          # 累加用于计算全局 Std
-          latents_f64 = latents.to(torch.float64)
-          sum_x += latents_f64.sum().item()
-          sum_x2 += (latents_f64 ** 2).sum().item()
-          n_elements += latents.numel()
+            # 转换为 float64 进行累加
+            latents_f64 = latents.to(dtype=torch.float64)
             
-          # 累加用于计算 Per-Channel Mean (Shift)
-          # Average over B, H, W
-          channel_sum += latents_f64.mean(dim=[0, 2, 3]) * latents.shape[0] # 这里的加权平均有点粗糙，假设每个batch size一致
-          # 更精确的做法是累加 sum(dim=[0, 2, 3]) 然后除以 总像素数/C
+            # 全局统计 (所有通道合并计算)
+            global_sum += latents_f64.sum().item()
+            global_sq_sum += (latents_f64 ** 2).sum().item()
+            total_elements += latents.numel()
             
-  # 计算统计量
-  global_mean = sum_x / n_elements
-  global_variance = (sum_x2 / n_elements) - (global_mean ** 2)
-  global_std = math.sqrt(global_variance)
+    # --- 计算统计量 ---
     
-  recommended_scaling_factor = 1.0 / global_std
-    
-  # 计算 Per-Channel Shift
-  # 注意：上面的 channel_sum 是 mean 的累加，不太对。应该累加 sum。
-  # 由于上面的循环逻辑为了简化，我们只用了 sum_x 计算全局。
-  # 如果需要 per-channel shift，需要重新累加。
-  # 这里我们简化为：Shift = Global Mean (标量) 或 0。
-  # FLUX 官方通常 scaling_factor ~ 0.3611, shift_factor ~ 0.1159 (部分通道) 或 0。
-    
-  print("-" * 50)
-  print(f"Total Elements processed: {n_elements}")
-  print(f"Global Latent Mean: {global_mean:.6f}")
-  print(f"Global Latent Std:  {global_std:.6f}")
-  print("-" * 50)
-  print(f"Calculated Scaling Factor (1/Std): {recommended_scaling_factor:.6f}")
-  print(f"Calculated Shift Factor (Mean):    {global_mean:.6f}")
-  print("-" * 50)
-    
-  # 保存模型
-  os.makedirs(args.output_dir, exist_ok=True)
-  print(f"Saving VAE to {args.output_dir}...")
-    
-  # 1. 保存权重和基础 Config
-  vae.save_pretrained(args.output_dir)
-    
-  # 2. 更新 Config.json
-  config_path = os.path.join(args.output_dir, "config.json")
-  with open(config_path, 'r') as f:
-      config = json.load(f)
-    
-  # 更新字段
-  config['scaling_factor'] = recommended_scaling_factor
-    
-  # Diffusers 中 shift_factor 可以是列表(per-channel)或浮点数
-  # 为了兼容性，如果你不想使用 shift，可以设为 0。
-  # 但如果是 Rectified Flow，通常希望 Latents 是 Zero Mean 的。
-  config['shift_factor'] = global_mean 
+    if total_elements == 0:
+        print("Error: No data processed.")
+        return
 
-  with open(config_path, 'w') as f:
-      json.dump(config, f, indent=2)
+    global_mean = global_sum / total_elements
+    # Var = E[X^2] - (E[X])^2
+    global_variance = (global_sq_sum / total_elements) - (global_mean ** 2)
+    # 防止方差为负（浮点误差）
+    global_variance = max(0.0, global_variance)
+    global_std = math.sqrt(global_variance)
+    
+    # 计算 Scale
+    # Scale = 1 / Std
+    rec_scale = 1.0 / global_std if global_std > 1e-9 else 1.0
+    
+    print("\n" + "=" * 50)
+    print("CALCULATION RESULTS (Global Only)")
+    print("=" * 50)
+    print(f"Total Elements Processed: {total_elements}")
+    print("-" * 30)
+    print(f"Latent Mean (Shift): {global_mean:.6f}")
+    print(f"Latent Std:          {global_std:.6f}")
+    print(f"Rec. Scale (1/Std):  {rec_scale:.6f}")
+    print("-" * 30)
+    print(f"(Ref: Flux.1 VAE default Shift ~ 0.1159, Scale ~ 0.3611)")
+
+    final_shift = float(global_mean)
+    final_scale = float(rec_scale)
+
+    # --- 保存模型 ---
+    os.makedirs(args.output_dir, exist_ok=True)
+    print(f"\nSaving VAE to {args.output_dir}...")
+    
+    # 1. 保存权重
+    vae.save_pretrained(args.output_dir)
+    
+    # 2. 更新 config.json
+    config_path = os.path.join(args.output_dir, "config.json")
+    
+    # 读取刚刚 save_pretrained 生成的 config
+    with open(config_path, 'r') as f:
+        saved_config = json.load(f)
+    
+    # 覆盖 scaling_factor 和 shift_factor
+    saved_config['scaling_factor'] = final_scale
+    saved_config['shift_factor'] = final_shift
+    
+    with open(config_path, 'w') as f:
+        json.dump(saved_config, f, indent=2)
         
-  print(f"Config updated with scaling_factor={recommended_scaling_factor:.6f} and shift_factor={global_mean:.6f}")
-  print("Done.")
+    print(f"Config updated successfully:")
+    print(f"  scaling_factor: {final_scale}")
+    print(f"  shift_factor:   {final_shift}")
+    print("Done.")
 
 if __name__ == "__main__":
     main()
