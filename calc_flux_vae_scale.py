@@ -11,12 +11,6 @@ python calc_flux_vae_scale.py \
   --batch_size 4
 """
 
-#!/usr/bin/env python3
-"""
-计算 FLUX VAE 的 scaling_factor 和 shift_factor 并保存为 Diffusers 格式。
-基于 NewbieLoraTrainer 的数据处理逻辑。
-"""
-
 import os
 import argparse
 import json
