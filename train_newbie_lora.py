@@ -645,7 +645,7 @@ def save_lora_model(accelerator, model, config, step=None):
         save_dir,
         is_main_process=accelerator.is_main_process,
         state_dict=accelerator.get_state_dict(model), 
-        safe_serialization=True
+        safe_serialization=True,
         **save_kwargs
     )
 
@@ -1128,6 +1128,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
