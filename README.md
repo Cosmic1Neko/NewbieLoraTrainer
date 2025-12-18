@@ -27,7 +27,7 @@ If you are already using Newbie inference models, this trainer will help you qui
 6. 增加了dropout_caption_rate(无条件生成训练，有利于CFG)和shuffle_caption等有用的caption处理功能。
 7. 增加了gradient_accumulation功能，使得更大批次的训练成为可能。
 8. 使用wandb替换tensorboard进行损失等日志记录。
-9. 修改图像分箱策略，使得更精细的分箱成为可能（依照sd-scripts）。
+9. 修改图像分箱策略，实现更精细的分箱，减少裁剪损失（依照sd-scripts）。
 10. 修复了对latent的错误缩放策略。`latents = (latents - shift_factor) * scaling_factor`
 
 ---
