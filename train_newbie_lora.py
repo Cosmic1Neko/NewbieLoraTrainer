@@ -1385,7 +1385,7 @@ def main():
     
     # 执行 EVA 初始化
     init_method = config['Model'].get('init_lora_weights', True)
-    if init_method == "eva" and accelerator.is_main_process:
+    if init_method == "eva":
         logger.info("Initializing LoRA weights with EVA (Explained Variance Adaptation)...")
         
         # 准备模型的数据类型
@@ -1418,7 +1418,7 @@ def main():
         
         # 等待所有进程同步（如果使用 DDP）
         accelerator.wait_for_everyone()
-    elif init_method.startswith("pissa"):
+    elif init_method.startswith("pissa") and accelerator.is_main_process:
         # 为PiSSA初始化保存初始权重
         # 定义初始权重保存路径
         pissa_init_dir = os.path.join(config['Model']['output_dir'], "pissa_init")
@@ -1627,6 +1627,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
