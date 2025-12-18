@@ -56,33 +56,7 @@ def main():
     set_seed(42)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
-    print(f"Loading VAE from: {args.vae_path}")
-    
-    # 基础 Config，用于单文件加载
-    config = {
-        "_class_name": "AutoencoderKL",
-        "_diffusers_version": "0.30.0",
-        "act_fn": "silu",
-        "block_out_channels": [128, 256, 512, 512],
-        "down_block_types": [
-            "DownEncoderBlock2D", "DownEncoderBlock2D", "DownEncoderBlock2D", "DownEncoderBlock2D"
-        ],
-        "force_upcast": True,
-        "in_channels": 3,
-        "latent_channels": 16,
-        "layers_per_block": 2,
-        "mid_block_add_attention": True,
-        "norm_num_groups": 32,
-        "out_channels": 3,
-        "sample_size": 1024,
-        "scaling_factor": 1.0, # 初始占位
-        "shift_factor": 0.0,   # 初始占位
-        "up_block_types": [
-            "UpDecoderBlock2D", "UpDecoderBlock2D", "UpDecoderBlock2D", "UpDecoderBlock2D"
-        ],
-        "use_post_quant_conv": False,
-        "use_quant_conv": False
-    }
+    print(f"Loading VAE from: {args.vae_path}")   
 
     try:
         if os.path.isdir(args.vae_path):
@@ -90,7 +64,7 @@ def main():
         else:
             vae = AutoencoderKL.from_single_file(
                 args.vae_path, 
-                config=config, 
+                config='black-forest-labs/FLUX.1-dev', 
                 subfolder="vae"
             )
     except Exception as e:
