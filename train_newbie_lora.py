@@ -399,7 +399,7 @@ def setup_lora(model, config):
     # EVA
     eva_config = None
     if init_lora_weights == "eva":
-        eva_config = EvaConfig(rho=1.0)
+        eva_config = EvaConfig(rho=1.0, tau=0.95)
     
     # 获取目标模块
     default_target_modules = [
@@ -1127,6 +1127,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
