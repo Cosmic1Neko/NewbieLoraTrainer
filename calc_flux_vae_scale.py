@@ -13,11 +13,12 @@
 
 Example:
 python calc_flux_vae_scale.py \
-  --train_data_dir /path/to/your/images \
-  --vae_path /path/to/flux_vae.safetensors \
-  --output_dir /path/to/save/diffusers_vae \
+  --train_data_dir /root/autodl-tmp/datasets \
+  --vae_path "https://huggingface.co/Anzhc/MS-LC-EQ-D-VR_VAE/blob/main/Pad Flux EQ v2 B1.safetensors" \
+  --output_dir /root/autodl-tmp/diffusers_vae \
   --resolution 1024 \
   --batch_size 4 \
+  --enable_bucket \
   --vae_reflect_padding
 """
 
