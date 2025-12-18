@@ -96,8 +96,9 @@ class EVADataloader:
                 with torch.no_grad():
                     # VAE Encode
                     latents = self.vae.encode(pixel_values).latent_dist.sample()
-                    scaling_factor = getattr(self.vae.config, 'scaling_factor', 0.13025)
-                    latents = latents * scaling_factor
+                    scaling_factor = getattr(self.vae.config, 'scaling_factor', 0.3611)
+                    shift_factor = getattr(self.vae.config, 'shift_factor', 0.1159)
+                    latents = (latents - shift_factor) * scaling_factor
 
             # 2. 准备 Text Embeddings
             with torch.no_grad():
@@ -311,8 +312,10 @@ class ImageCaptionDataset(Dataset):
                         pixel_values = transform(image).unsqueeze(0).to(self.device)
 
                         latents = self.vae.encode(pixel_values).latent_dist.mode()
-                        scaling_factor = getattr(self.vae.config, 'scaling_factor', 0.13025)
-                        latents = (latents * scaling_factor).squeeze(0).cpu()
+                        scaling_factor = getattr(self.vae.config, 'scaling_factor', 0.3611)
+                        shift_factor = getattr(self.vae.config, 'shift_factor', 0.1159)
+                        latents = (latents - shift_factor) * scaling_factor
+                        latents = latents.squeeze(0).cpu()
 
                         save_file({
                             "latents": latents,
@@ -1062,8 +1065,9 @@ def compute_loss(model, vae, text_encoder, tokenizer, clip_model, clip_tokenizer
 
         with torch.no_grad():
             latents = vae.encode(pixel_values).latent_dist.sample()
-            scaling_factor = getattr(vae.config, 'scaling_factor', 0.13025)
-            latents = latents * scaling_factor
+            scaling_factor = getattr(self.vae.config, 'scaling_factor', 0.3611)
+            shift_factor = getattr(self.vae.config, 'shift_factor', 0.1159)
+            latents = (latents - shift_factor) * scaling_factor
 
     with torch.no_grad():
         # Gemma 编码
@@ -1627,6 +1631,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
