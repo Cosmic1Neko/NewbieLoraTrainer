@@ -632,23 +632,12 @@ def save_lora_model(accelerator, model, config, step=None):
     os.makedirs(save_dir, exist_ok=True)
 
     unwrapped = accelerator.unwrap_model(model)
-
-    """
-    save_kwargs = {}
-    pissa_init_dir = config['Model'].get('pissa_init_dir')
-    # 如果配置中有 pissa_init_dir 且文件存在，则启用转换参数
-    if pissa_init_dir and os.path.exists(pissa_init_dir):
-        save_kwargs["path_initial_model_for_weight_conversion"] = pissa_init_dir
-        if accelerator.is_main_process:
-            logger.info("Converting PiSSA to standard LoRA (Delta W) for ComfyUI compatibility...")
-    """
             
     unwrapped.save_pretrained(
         save_dir,
         is_main_process=accelerator.is_main_process,
         state_dict=accelerator.get_state_dict(model), 
         safe_serialization=True,
-        #**save_kwargs
     )
 
     if accelerator.is_main_process:
@@ -921,27 +910,6 @@ def main():
         
         # 等待所有进程同步（如果使用 DDP）
         accelerator.wait_for_everyone()
-    """
-    elif init_method.startswith("pissa") and accelerator.is_main_process:
-        # 为PiSSA初始化保存初始权重
-        # 定义初始权重保存路径
-        pissa_init_dir = os.path.join(config['Model']['output_dir'], "pissa_init")
-        # 将路径存入 config 以便后续 save_lora_model 使用
-        config['Model']['pissa_init_dir'] = pissa_init_dir
-        
-        # 仅在主进程保存，避免多进程冲突
-        if accelerator.is_main_process:
-            if not os.path.exists(pissa_init_dir):
-                logger.info(f"Detected PiSSA initialization. Saving initial state to {pissa_init_dir} for later conversion...")
-                # 保存未训练的初始 LoRA 权重 (A_0, B_0)
-                # 注意：这里需要 unwrap 或者是直接用 model (如果是 PeftModel)
-                model.save_pretrained(pissa_init_dir)
-            else:
-                logger.info(f"PiSSA initial state already exists at {pissa_init_dir}")
-        
-        # 等待主进程保存完毕
-        accelerator.wait_for_everyone()
-    """
     
     if config['Model'].get('gradient_checkpointing', True):
         model.gradient_checkpointing_enable()
@@ -1132,6 +1100,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
