@@ -410,12 +410,16 @@ def setup_lora(model, config):
         "time_text_embed.1",
         "clip_text_pooled_proj.1",
     ]
+    exclude_modules = [
+        "noise_refiner.0.adaLN_modulation.1"
+    ]
     target_modules = config['Model'].get('lora_target_modules') or default_target_modules
 
     lora_config = LoraConfig(
         r=lora_rank,
         lora_alpha=lora_alpha,
         target_modules=target_modules,
+        exclude_modules=exclude_modules,
         lora_dropout=lora_dropout,
         bias="none",
         task_type=None,
@@ -1100,3 +1104,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
