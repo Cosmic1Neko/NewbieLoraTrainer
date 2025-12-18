@@ -45,7 +45,7 @@ def parse_args():
     parser.add_argument("--resolution", type=int, default=1024, help="计算时使用的分辨率 (默认 1024)")
     parser.add_argument("--batch_size", type=int, default=1, help="Batch size")
     parser.add_argument("--num_workers", type=int, default=4, help="DataLoader workers")
-    parser.add_argument("--max_samples", type=int, default=100, help="最大采样图片数 (None 为使用全部)")
+    parser.add_argument("--max_samples", type=int, default=None, help="最大采样图片数 (None 为使用全部)")
     parser.add_argument("--enable_bucket", action="store_true", help="启用分桶 (计算统计量时建议关闭 bucket 以保持一致性，但也支持开启)")
     parser.add_argument("--vae_reflect_padding", action="store_true", help="VAE是否使用reflect_padding")
     return parser.parse_args()
