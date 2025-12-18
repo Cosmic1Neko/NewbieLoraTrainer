@@ -1,4 +1,4 @@
-k[Model]
+[Model]
 #模型加载路径，填写clip_model、text_encoder、transformer、vae、model_index.json所在的文件夹路径
 base_model_path = "/root/autodl-tmp/NewBie"
 # vae是否使用"reflect"的padding模式，适用于在该参数下训练的vae
@@ -184,6 +184,7 @@ gradient_clip_norm = 1.0
 
 # FlashAttention-2 优化
 use_flash_attention_2 = true
+
 
 
 
