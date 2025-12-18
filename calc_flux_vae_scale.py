@@ -33,14 +33,9 @@ from accelerate.utils import set_seed
 
 # 尝试从 train_newbie_lora 导入数据集类，如果失败则尝试相对路径
 try:
-    from train_newbie_lora import ImageCaptionDataset, collate_fn
+    from dataset import ImageCaptionDataset, collate_fn
 except ImportError:
-    import sys
-    sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-    try:
-        from train_newbie_lora import ImageCaptionDataset, collate_fn
-    except ImportError:
-        raise ImportError("请确保 train_newbie_lora.py 在同一目录下或 Python 路径中。")
+    raise ImportError("请确保 dataset.py 在同一目录下。")
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Calculate VAE scaling and shift factors for Flux (Global Only)")
