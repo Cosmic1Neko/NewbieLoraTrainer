@@ -126,11 +126,11 @@ class EVADataloader:
 
             # 4. 返回匹配 model.forward 参数的字典
             yield {
-                "x": xt.to(self.dtype),
-                "t": t.to(self.dtype),
-                "cap_feats": cap_feats,
-                "cap_mask": cap_mask,
-                "clip_text_pooled": clip_text_pooled
+                "x": xt.to(self.dtype).cpu(),
+                "t": t.to(self.dtype).cpu(),
+                "cap_feats": cap_feats.cpu(),
+                "cap_mask": cap_mask.cpu(),
+                "clip_text_pooled": clip_text_pooled.cpu()
             }
 
 def load_encoders_only(config):
@@ -1127,6 +1127,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
