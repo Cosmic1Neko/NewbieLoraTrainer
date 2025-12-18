@@ -90,7 +90,7 @@ class EVADataloader:
                 latents = batch["latents"].to(self.device, dtype=self.dtype)
                 captions = batch["captions"]
             else:
-                pixel_values = batch["pixel_values"].to(self.device, dtype=self.dtype)
+                pixel_values = batch["pixel_values"].to(self.device, dtype=self.vae.dtype)
                 captions = batch["captions"]
                 with torch.no_grad():
                     # VAE Encode
@@ -1127,6 +1127,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
