@@ -10,6 +10,7 @@ from torchvision.transforms import InterpolationMode
 from safetensors.torch import load_file
 from PIL import Image
 import numpy as np
+from tqdm import tqdm
 
 # 设置 logger
 logger = logging.getLogger(__name__)
