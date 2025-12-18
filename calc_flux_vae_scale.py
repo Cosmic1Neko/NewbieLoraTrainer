@@ -16,8 +16,7 @@ python calc_flux_vae_scale.py \
   --output_dir /root/autodl-tmp/diffusers_vae \
   --resolution 1024 \
   --batch_size 4 \
-  --enable_bucket \
-  --vae_reflect_padding
+  --enable_bucket
 """
 
 import os
@@ -32,7 +31,6 @@ from accelerate.utils import set_seed
 
 # 尝试从 train_newbie_lora 导入数据集类，如果失败则尝试相对路径
 try:
-    # [Fix] 增加导入 BucketBatchSampler
     from dataset import ImageCaptionDataset, collate_fn, BucketBatchSampler
 except ImportError:
     raise ImportError("请确保 dataset.py 在同一目录下。")
@@ -47,7 +45,6 @@ def parse_args():
     parser.add_argument("--num_workers", type=int, default=4, help="DataLoader workers")
     parser.add_argument("--max_samples", type=int, default=None, help="最大采样图片数 (None 为使用全部)")
     parser.add_argument("--enable_bucket", action="store_true", help="启用分桶 (计算统计量时建议关闭 bucket 以保持一致性，但也支持开启)")
-    parser.add_argument("--vae_reflect_padding", action="store_true", help="VAE是否使用reflect_padding")
     return parser.parse_args()
 
 def main():
@@ -69,15 +66,6 @@ def main():
     except Exception as e:
         print(f"Error loading VAE: {e}")
         return
-
-    # 设置 Padding 模式
-    if args.vae_reflect_padding:
-        print("Enabling 'reflect' padding mode for VAE layers...")
-        for module in vae.modules():
-            if isinstance(module, torch.nn.Conv2d):
-                pad_h, pad_w = module.padding if isinstance(module.padding, tuple) else (module.padding, module.padding)
-                if pad_h > 0 or pad_w > 0:
-                    module.padding_mode = "reflect"
 
     vae.to(device)
     vae.eval()
