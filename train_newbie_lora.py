@@ -921,6 +921,7 @@ def main():
         
         # 等待所有进程同步（如果使用 DDP）
         accelerator.wait_for_everyone()
+    """
     elif init_method.startswith("pissa") and accelerator.is_main_process:
         # 为PiSSA初始化保存初始权重
         # 定义初始权重保存路径
@@ -940,7 +941,8 @@ def main():
         
         # 等待主进程保存完毕
         accelerator.wait_for_everyone()
-
+    """
+    
     if config['Model'].get('gradient_checkpointing', True):
         model.gradient_checkpointing_enable()
         logger.info("Gradient checkpointing enabled")
@@ -1130,6 +1132,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
