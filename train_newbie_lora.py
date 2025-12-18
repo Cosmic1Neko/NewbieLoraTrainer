@@ -55,68 +55,83 @@ def apply_average_pool(latent, factor=4):
     """
     return torch.nn.functional.avg_pool2d(latent, kernel_size=factor, stride=factor)
 
-def get_eva_batch_generator(dataloader, device, vae, text_encoder, tokenizer, clip_model, clip_tokenizer, transport, gemma3_prompt, dtype, num_steps=100):
+class EVADataloader:
     """
-    生成用于 EVA 初始化的数据 Batch。
-    使用 transport 对象来确保噪声分布(Logit-Normal)和时间偏移(Time Shift)与训练时完全一致。
+    EVA 初始化用的 Dataloader 包装类。
     """
-    iter_loader = iter(dataloader)
-    
-    for _ in range(num_steps):
-        try:
-            batch = next(iter_loader)
-        except StopIteration:
-            iter_loader = iter(dataloader)
-            batch = next(iter_loader)
-            
-        # 1. 准备 Latents 和 Caption Embeddings (复制 compute_loss 的部分逻辑)
-        if batch.get("cached", False):
-            latents = batch["latents"].to(device, dtype=dtype)
-            captions = batch["captions"]
-        else:
-            pixel_values = batch["pixel_values"].to(device, dtype=dtype)
-            captions = batch["captions"]
+    def __init__(self, dataloader, device, vae, text_encoder, tokenizer, clip_model, clip_tokenizer, transport, gemma3_prompt, dtype, num_steps=100):
+        self.dataloader = dataloader
+        self.device = device
+        self.vae = vae
+        self.text_encoder = text_encoder
+        self.tokenizer = tokenizer
+        self.clip_model = clip_model
+        self.clip_tokenizer = clip_tokenizer
+        self.transport = transport
+        self.gemma3_prompt = gemma3_prompt
+        self.dtype = dtype
+        self.num_steps = num_steps
+
+    def __len__(self):
+        return self.num_steps
+
+    def __iter__(self):
+        iter_loader = iter(self.dataloader)
+        
+        for _ in range(self.num_steps):
+            try:
+                batch = next(iter_loader)
+            except StopIteration:
+                # 如果 dataloader 用尽，重新创建迭代器
+                iter_loader = iter(self.dataloader)
+                batch = next(iter_loader)
+                
+            # 1. 准备 Latents 和 Caption Embeddings
+            if batch.get("cached", False):
+                latents = batch["latents"].to(self.device, dtype=self.dtype)
+                captions = batch["captions"]
+            else:
+                pixel_values = batch["pixel_values"].to(self.device, dtype=self.dtype)
+                captions = batch["captions"]
+                with torch.no_grad():
+                    # VAE Encode
+                    latents = self.vae.encode(pixel_values).latent_dist.sample()
+                    scaling_factor = getattr(self.vae.config, 'scaling_factor', 0.13025)
+                    latents = latents * scaling_factor
+
+            # 2. 准备 Text Embeddings
             with torch.no_grad():
-                # VAE Encode
-                latents = vae.encode(pixel_values).latent_dist.sample()
-                scaling_factor = getattr(vae.config, 'scaling_factor', 0.13025)
-                latents = latents * scaling_factor
+                # Gemma Text Encode
+                gemma_texts = [self.gemma3_prompt + cap if self.gemma3_prompt else cap for cap in captions]
+                gemma_inputs = self.tokenizer(
+                    gemma_texts, padding=True, pad_to_multiple_of=8,
+                    truncation=True, max_length=1280, return_tensors="pt"
+                ).to(self.device)
+                gemma_outputs = self.text_encoder(**gemma_inputs, output_hidden_states=True)
+                cap_feats = gemma_outputs.hidden_states[-2].to(dtype=self.dtype)
+                cap_mask = gemma_inputs.attention_mask.to(self.device)
+                
+                # CLIP Text Encode
+                clip_inputs = self.clip_tokenizer(
+                    captions, padding=True, truncation=True,
+                    max_length=2048, return_tensors="pt"
+                ).to(self.device)
+                clip_text_pooled = self.clip_model.get_text_features(**clip_inputs).to(dtype=self.dtype)
 
-        # 2. 准备 Text Embeddings
-        with torch.no_grad():
-            # Gemma Text Encode
-            gemma_texts = [gemma3_prompt + cap if gemma3_prompt else cap for cap in captions]
-            gemma_inputs = tokenizer(
-                gemma_texts, padding=True, pad_to_multiple_of=8,
-                truncation=True, max_length=1280, return_tensors="pt"
-            ).to(device)
-            gemma_outputs = text_encoder(**gemma_inputs, output_hidden_states=True)
-            cap_feats = gemma_outputs.hidden_states[-2].to(dtype=dtype)
-            cap_mask = gemma_inputs.attention_mask.to(device)
-            
-            # CLIP Text Encode
-            clip_inputs = clip_tokenizer(
-                captions, padding=True, truncation=True,
-                max_length=2048, return_tensors="pt"
-            ).to(device)
-            clip_text_pooled = clip_model.get_text_features(**clip_inputs).to(dtype=dtype)
+            # 3. 使用 Transport 进行加噪
+            with torch.no_grad():
+                # 采样时间步 t 和噪声 x0
+                t, x0, x1 = self.transport.sample(latents)
+                t, xt, ut = self.transport.path_sampler.plan(t, x0, x1)
 
-        # 3. 使用 Transport 进行加噪
-        # transport.sample 会处理 Logit-Normal 分布采样和 Resolution-aware Time Shifting
-        # latents 在这里即 transport 中的 x1 (数据点)
-        with torch.no_grad():
-            # 采样时间步 t 和噪声 x0
-            t, x0, x1 = transport.sample(latents)
-            t, xt, ut = transport.path_sampler.plan(t, x0, x1)
-
-        # 4. 返回匹配 model.forward 参数的字典
-        yield {
-            "x": xt.to(dtype),
-            "t": t.to(dtype),
-            "cap_feats": cap_feats,
-            "cap_mask": cap_mask,
-            "clip_text_pooled": clip_text_pooled
-        }
+            # 4. 返回匹配 model.forward 参数的字典
+            yield {
+                "x": xt.to(self.dtype),
+                "t": t.to(self.dtype),
+                "cap_feats": cap_feats,
+                "cap_mask": cap_mask,
+                "clip_text_pooled": clip_text_pooled
+            }
 
 class ImageCaptionDataset(Dataset):
     """图像-文本对数据集，支持 kohya_ss 风格目录重复"""
@@ -1216,6 +1231,7 @@ def main():
     drop_artist_rate = config['Model'].get('drop_artist_rate', 0.0)
     use_multires_loss = config['Model'].get('use_multires_loss', True)
     multires_factor = config['Model'].get('multires_factor', 4)
+    eva_num_steps = config['Model'].get('eva_num_steps', 100)
 
     if use_cache:
         logger.info("Checking if VAE cache files exist...")
@@ -1376,7 +1392,7 @@ def main():
         target_dtype = torch.bfloat16 if mixed_precision == 'bf16' else (torch.float16 if mixed_precision == 'fp16' else torch.float32)
         
         # 创建数据生成器
-        data_gen = get_eva_batch_generator(
+        data_gen = EVADataloader(
             dataloader=train_dataloader,
             device=accelerator.device,
             vae=vae,
@@ -1387,7 +1403,7 @@ def main():
             transport=transport,
             gemma3_prompt=gemma3_prompt,
             dtype=target_dtype,
-            num_steps=100
+            num_steps=eva_num_steps
         )
         
         # 执行初始化
@@ -1606,6 +1622,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
