@@ -2,13 +2,14 @@ import os
 import random
 import math
 import logging
-import torch
 import re
+import torch
 from torch.utils.data import Dataset
 from torchvision import transforms
 from torchvision.transforms import InterpolationMode
 from safetensors.torch import load_file
 from PIL import Image
+import numpy as np
 
 # 设置 logger
 logger = logging.getLogger(__name__)
