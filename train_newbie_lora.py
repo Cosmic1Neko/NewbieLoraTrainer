@@ -72,7 +72,7 @@ class EVADataloader:
         self.num_batches = num_batches
 
     def __len__(self):
-        return self.num_steps
+        return self.num_batches
 
     def __iter__(self):
         iter_loader = iter(self.dataloader)
@@ -1128,6 +1128,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
