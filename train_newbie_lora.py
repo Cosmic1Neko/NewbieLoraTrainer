@@ -17,8 +17,6 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader
-from torchvision import transforms
-from torchvision.transforms import InterpolationMode
 from accelerate import Accelerator, DistributedDataParallelKwargs
 from accelerate.utils import set_seed
 from diffusers import AutoencoderKL
@@ -563,8 +561,8 @@ def compute_loss(model, vae, text_encoder, tokenizer, clip_model, clip_tokenizer
 
         with torch.no_grad():
             latents = vae.encode(pixel_values).latent_dist.sample()
-            scaling_factor = getattr(self.vae.config, 'scaling_factor', 0.3611)
-            shift_factor = getattr(self.vae.config, 'shift_factor', 0.1159)
+            scaling_factor = getattr(vae.config, 'scaling_factor', 0.3611)
+            shift_factor = getattr(vae.config, 'shift_factor', 0.1159)
             latents = (latents - shift_factor) * scaling_factor
 
     with torch.no_grad():
@@ -1129,6 +1127,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
