@@ -623,7 +623,7 @@ def save_checkpoint(accelerator, model, optimizer, scheduler, step, config):
 
 
 def save_lora_model(accelerator, model, config, step=None):
-    """Save adapter weights，两种都用“目录结构”保存"""
+    """Save adapter weights"""
     output_dir = config['Model']['output_dir']
     output_name = config['Model']['output_name']
     os.makedirs(output_dir, exist_ok=True)
@@ -632,7 +632,8 @@ def save_lora_model(accelerator, model, config, step=None):
     os.makedirs(save_dir, exist_ok=True)
 
     unwrapped = accelerator.unwrap_model(model)
-    
+
+    """
     save_kwargs = {}
     pissa_init_dir = config['Model'].get('pissa_init_dir')
     # 如果配置中有 pissa_init_dir 且文件存在，则启用转换参数
@@ -640,13 +641,14 @@ def save_lora_model(accelerator, model, config, step=None):
         save_kwargs["path_initial_model_for_weight_conversion"] = pissa_init_dir
         if accelerator.is_main_process:
             logger.info("Converting PiSSA to standard LoRA (Delta W) for ComfyUI compatibility...")
+    """
             
     unwrapped.save_pretrained(
         save_dir,
         is_main_process=accelerator.is_main_process,
         state_dict=accelerator.get_state_dict(model), 
         safe_serialization=True,
-        **save_kwargs
+        #**save_kwargs
     )
 
     if accelerator.is_main_process:
@@ -1128,6 +1130,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
