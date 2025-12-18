@@ -129,7 +129,7 @@ train_norm = true
 
 # 是否启用DoRA，启用时建议关闭lora_dropout提升性能
 # 注意，与pissa等非随机初始化不兼容
-use_dora = false
+use_dora = true
 
 # 是否启用rsLoRA
 # 修改LoRA缩放为lora_alpha / r -> lora_alpha / math.sqrt(r)
@@ -145,8 +145,8 @@ use_rslora = true
 #  "olora"     - OLoRA 初始化 (正交初始化)
 #  "eva"       - EVA 初始化，需要正向传播，基于训练数据进行初始化。支持Dora
 init_lora_weights = "eva"
-# 使用eva初始化时，正向传播的最大次数
-eva_num_steps = 100
+# 使用eva初始化时使用多少批数据
+eva_num_steps = 50
 
 # =============================================================================
 # LoRA 目标模块配置
@@ -184,6 +184,7 @@ gradient_clip_norm = 1.0
 
 # FlashAttention-2 优化
 use_flash_attention_2 = true
+
 
 
 
