@@ -27,7 +27,7 @@ resolution = 1024
 # 图像分箱参数
 min_bucket_reso = 256
 max_bucket_reso = 2048
-bucket_reso_step = 32
+bucket_reso_step = 64
 # 是否打乱tag
 shuffle_caption = true
 keep_tokens_separator = "|||"
@@ -185,6 +185,7 @@ gradient_clip_norm = 1.0
 
 # FlashAttention-2 优化
 use_flash_attention_2 = true
+
 
 
 
