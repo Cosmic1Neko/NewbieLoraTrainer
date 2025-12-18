@@ -1,4 +1,4 @@
-[Model]
+k[Model]
 #模型加载路径，填写clip_model、text_encoder、transformer、vae、model_index.json所在的文件夹路径
 base_model_path = "/root/autodl-tmp/NewBie"
 # vae是否使用"reflect"的padding模式，适用于在该参数下训练的vae
@@ -124,7 +124,7 @@ lora_alpha = 128
 # 推荐0.05-0.1或0
 lora_dropout = 0.0
 
-# 是否训练标准层
+# 是否训练标准层 TODO
 train_norm = true
 
 # 是否启用DoRA，启用时建议关闭lora_dropout提升性能
@@ -145,6 +145,8 @@ use_rslora = true
 #  "olora"     - OLoRA 初始化 (正交初始化)
 #  "eva"       - EVA 初始化，需要正向传播，基于训练数据进行初始化。支持Dora
 init_lora_weights = "eva"
+# 使用eva初始化时，正向传播的最大次数
+eva_num_steps = 100
 
 # =============================================================================
 # LoRA 目标模块配置
@@ -182,6 +184,7 @@ gradient_clip_norm = 1.0
 
 # FlashAttention-2 优化
 use_flash_attention_2 = true
+
 
 
 
