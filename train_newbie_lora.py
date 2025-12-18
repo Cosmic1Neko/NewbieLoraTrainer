@@ -1407,7 +1407,12 @@ def main():
         )
         
         # 执行初始化
-        initialize_lora_eva_weights(model, data_gen)
+        initialize_lora_eva_weights(
+            model, 
+            data_gen,
+            prepare_model_inputs_fn=None,  # 禁用 LLM 的 mask 检查
+            prepare_layer_inputs_fn=None   # 使用默认的 flatten 策略，适合视觉模型
+        )
         
         logger.info("EVA initialization complete.")
         
@@ -1622,6 +1627,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
