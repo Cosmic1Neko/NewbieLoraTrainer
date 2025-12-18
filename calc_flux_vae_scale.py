@@ -9,7 +9,7 @@
 3. 计算 Scaling Factor = 1 / Std。
 4. 更新 VAE 的 config.json 并保存。
 
-修改说明：已移除单通道 (Per-Channel) 统计计算，仅计算全局统计量。
+修改说明：已修复开启 bucket 且 batch_size > 1 时的 stack error。
 
 Example:
 python calc_flux_vae_scale.py \
@@ -17,7 +17,7 @@ python calc_flux_vae_scale.py \
   --vae_path "https://huggingface.co/Anzhc/MS-LC-EQ-D-VR_VAE/blob/main/Pad Flux EQ v2 B1.safetensors" \
   --output_dir /root/autodl-tmp/diffusers_vae \
   --resolution 1024 \
-  --batch_size 4 \
+  --batch_size 16 \
   --enable_bucket \
   --vae_reflect_padding
 """
@@ -34,7 +34,8 @@ from accelerate.utils import set_seed
 
 # 尝试从 train_newbie_lora 导入数据集类，如果失败则尝试相对路径
 try:
-    from dataset import ImageCaptionDataset, collate_fn
+    # [Fix] 增加导入 BucketBatchSampler
+    from dataset import ImageCaptionDataset, collate_fn, BucketBatchSampler
 except ImportError:
     raise ImportError("请确保 dataset.py 在同一目录下。")
 
@@ -100,13 +101,29 @@ def main():
         dataset = torch.utils.data.Subset(dataset, indices)
         print(f"Subsampled dataset to {len(dataset)} images.")
 
-    dataloader = DataLoader(
-        dataset,
-        batch_size=args.batch_size,
-        shuffle=False,
-        collate_fn=collate_fn,
-        num_workers=args.num_workers
-    )
+    if args.enable_bucket:
+        print("Using BucketBatchSampler because bucketing is enabled.")
+        batch_sampler = BucketBatchSampler(
+            dataset,
+            batch_size=args.batch_size,
+            shuffle=False, # 统计任务不需要打乱
+            seed=42
+        )
+        dataloader = DataLoader(
+            dataset,
+            batch_sampler=batch_sampler, 
+            collate_fn=collate_fn,
+            num_workers=args.num_workers
+        )
+    else:
+        # 未开启 Bucket，所有图像都是固定分辨率，直接使用默认 DataLoader
+        dataloader = DataLoader(
+            dataset,
+            batch_size=args.batch_size,
+            shuffle=False,
+            collate_fn=collate_fn,
+            num_workers=args.num_workers
+        )
 
     print("Starting Loop to calculate Global Mean and Std...")
     
