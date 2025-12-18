@@ -9,15 +9,13 @@
 3. 计算 Scaling Factor = 1 / Std。
 4. 更新 VAE 的 config.json 并保存。
 
-修改说明：已修复开启 bucket 且 batch_size > 1 时的 stack error。
-
 Example:
 python calc_flux_vae_scale.py \
   --train_data_dir /root/autodl-tmp/datasets \
   --vae_path "https://huggingface.co/Anzhc/MS-LC-EQ-D-VR_VAE/blob/main/Pad Flux EQ v2 B1.safetensors" \
   --output_dir /root/autodl-tmp/diffusers_vae \
   --resolution 1024 \
-  --batch_size 16 \
+  --batch_size 4 \
   --enable_bucket \
   --vae_reflect_padding
 """
@@ -45,9 +43,9 @@ def parse_args():
     parser.add_argument("--vae_path", type=str, required=True, help="单文件 VAE (.safetensors) 路径或 Diffusers 模型目录")
     parser.add_argument("--output_dir", type=str, required=True, help="输出 Diffusers VAE 的目录")
     parser.add_argument("--resolution", type=int, default=1024, help="计算时使用的分辨率 (默认 1024)")
-    parser.add_argument("--batch_size", type=int, default=1, help="Batch size (建议 1-4)")
+    parser.add_argument("--batch_size", type=int, default=1, help="Batch size")
     parser.add_argument("--num_workers", type=int, default=4, help="DataLoader workers")
-    parser.add_argument("--max_samples", type=int, default=None, help="最大采样图片数 (None 为使用全部)")
+    parser.add_argument("--max_samples", type=int, default=100, help="最大采样图片数 (None 为使用全部)")
     parser.add_argument("--enable_bucket", action="store_true", help="启用分桶 (计算统计量时建议关闭 bucket 以保持一致性，但也支持开启)")
     parser.add_argument("--vae_reflect_padding", action="store_true", help="VAE是否使用reflect_padding")
     return parser.parse_args()
@@ -101,20 +99,56 @@ def main():
         dataset = torch.utils.data.Subset(dataset, indices)
         print(f"Subsampled dataset to {len(dataset)} images.")
 
+    # [Fix] 这里的逻辑修改了：如果开启 bucket，必须使用 BucketBatchSampler
     if args.enable_bucket:
         print("Using BucketBatchSampler because bucketing is enabled.")
-        batch_sampler = BucketBatchSampler(
-            dataset,
-            batch_size=args.batch_size,
-            shuffle=False, # 统计任务不需要打乱
-            seed=42
-        )
-        dataloader = DataLoader(
-            dataset,
-            batch_sampler=batch_sampler, 
-            collate_fn=collate_fn,
-            num_workers=args.num_workers
-        )
+        # BucketBatchSampler 会自动处理 shuffle，这里为了统计可以设 shuffle=False (或者 True 也不影响均值计算)
+        # 注意：BucketBatchSampler 初始化需要 dataset 本身（如果 dataset 被 Subset 包裹了，需要小心处理）
+        # 但 dataset.py 里的 BucketBatchSampler 是直接访问 dataset.image_to_bucket 等属性的。
+        # 如果使用了 Subset，Subset 对象没有 image_to_bucket 属性。
+        
+        # 针对 Subset 的特殊处理：如果 dataset 是 Subset，我们实际上无法简单使用原来的 BucketBatchSampler，
+        # 因为原 BucketBatchSampler 依赖整个数据集的 buckets 索引。
+        # 简单起见，如果用了 Subset 且开启了 Bucket，我们强制 batch_size=1 或者警告。
+        # 但为了稳健，如果 dataset 是 Subset，我们需要batch_size = 1。
+        
+        if isinstance(dataset, torch.utils.data.Subset):
+            print("Warning: Using Subset with enable_bucket and batch_size > 1 is tricky. "
+                  "Ideally we should rebuild buckets for the subset, but here we fallback to batch_size=1 "
+                  "to avoid errors, or you can implement a Subset-aware sampler.")
+            # 简单回退策略：强制 batch_size = 1
+            if args.batch_size > 1:
+                print("Forcing batch_size=1 due to Subset usage with Buckets.")
+                args.batch_size = 1
+                dataloader = DataLoader(
+                    dataset,
+                    batch_size=1,
+                    shuffle=False,
+                    collate_fn=collate_fn,
+                    num_workers=args.num_workers
+                )
+            else:
+                dataloader = DataLoader(
+                    dataset,
+                    batch_size=1,
+                    shuffle=False,
+                    collate_fn=collate_fn,
+                    num_workers=args.num_workers
+                )
+        else:
+            # 正常情况：使用 BucketBatchSampler
+            batch_sampler = BucketBatchSampler(
+                dataset,
+                batch_size=args.batch_size,
+                shuffle=False, # 统计任务不需要打乱
+                seed=42
+            )
+            dataloader = DataLoader(
+                dataset,
+                batch_sampler=batch_sampler, # 互斥：使用了 batch_sampler 就不能传 batch_size 和 shuffle
+                collate_fn=collate_fn,
+                num_workers=args.num_workers
+            )
     else:
         # 未开启 Bucket，所有图像都是固定分辨率，直接使用默认 DataLoader
         dataloader = DataLoader(
