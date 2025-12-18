@@ -58,7 +58,7 @@ class EVADataloader:
     """
     EVA 初始化用的 Dataloader 包装类。
     """
-    def __init__(self, dataloader, device, vae, text_encoder, tokenizer, clip_model, clip_tokenizer, transport, gemma3_prompt, dtype, num_steps=100):
+    def __init__(self, dataloader, device, vae, text_encoder, tokenizer, clip_model, clip_tokenizer, transport, gemma3_prompt, dtype, num_batches=100):
         self.dataloader = dataloader
         self.device = device
         self.vae = vae
@@ -69,7 +69,7 @@ class EVADataloader:
         self.transport = transport
         self.gemma3_prompt = gemma3_prompt
         self.dtype = dtype
-        self.num_steps = num_steps
+        self.num_batches = num_batches
 
     def __len__(self):
         return self.num_steps
@@ -77,7 +77,7 @@ class EVADataloader:
     def __iter__(self):
         iter_loader = iter(self.dataloader)
         
-        for _ in range(self.num_steps):
+        for _ in range(self.num_batches):
             try:
                 batch = next(iter_loader)
             except StopIteration:
@@ -395,11 +395,12 @@ def setup_lora(model, config):
     use_rslora=config['Model'].get('use_rslora', False)
     init_lora_weights=config['Model'].get('init_lora_weights', True)
     train_norm=config['Model'].get('train_norm', False)
+    eva_tau=config['Model'].get('eva_tau', 0.99)
 
     # EVA
     eva_config = None
     if init_lora_weights == "eva":
-        eva_config = EvaConfig(rho=1.0, tau=0.95)
+        eva_config = EvaConfig(rho=1.0, tau=eva_tau)
     
     # 获取目标模块
     default_target_modules = [
@@ -731,7 +732,7 @@ def main():
     drop_artist_rate = config['Model'].get('drop_artist_rate', 0.0)
     use_multires_loss = config['Model'].get('use_multires_loss', True)
     multires_factor = config['Model'].get('multires_factor', 4)
-    eva_num_steps = config['Model'].get('eva_num_steps', 100)
+    eva_num_batches = config['Model'].get('eva_num_batches', 100)
 
     if use_cache:
         logger.info("Checking if VAE cache files exist...")
@@ -903,7 +904,7 @@ def main():
             transport=transport,
             gemma3_prompt=gemma3_prompt,
             dtype=target_dtype,
-            num_steps=eva_num_steps
+            num_batches=eva_num_batches
         )
         
         # 执行初始化
@@ -1127,6 +1128,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
