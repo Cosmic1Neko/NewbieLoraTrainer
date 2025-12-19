@@ -548,12 +548,10 @@ def save_lora_model(accelerator, model, config, step=None):
 
     unwrapped = accelerator.unwrap_model(model)
 
-    # 获取基础模型路径，用于 PiSSA/OLoRA 转换
-    base_model_path = config['Model']['base_model_path']
-    if os.path.exists(os.path.join(base_model_path, "model_index.json")):
-        conversion_path = os.path.join(base_model_path, "transformer")
-    else:
-        conversion_path = base_model_path
+    # 另存基础模型(基础权重被修改)，用于 PiSSA/OLoRA 转换
+    init_model_path = os.path.join(output_dir, "init_model")
+    if not os.path.exists(init_model_path): 
+        unwrapped.save_pretrained(init_model_path) 
 
     # 获取当前配置，检查初始化方式
     peft_config = unwrapped.peft_config['default']
@@ -564,7 +562,7 @@ def save_lora_model(accelerator, model, config, step=None):
     if isinstance(init_lora_weights, str) and any(key in init_lora_weights.lower() for key in ["pissa", "olora"]):
         if accelerator.is_main_process:
             logger.info(f"Detected {init_lora_weights} initialization. Converting to standard LoRA for plug-and-play compatibility...")
-        save_kwargs["path_initial_model_for_weight_conversion"] = conversion_path
+            save_kwargs["path_initial_model_for_weight_conversion"] = init_model_path
             
     unwrapped.save_pretrained(
         save_dir,
@@ -1009,6 +1007,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
