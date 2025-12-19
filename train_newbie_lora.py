@@ -132,7 +132,7 @@ class EVADataloader:
                 "cap_mask": cap_mask.cpu(),
                 "clip_text_pooled": clip_text_pooled.cpu()
             }
-
+    
 def load_encoders_only(config):
     base_model_path = config['Model']['base_model_path']
     trust_remote_code = config['Model'].get('trust_remote_code', True)
@@ -898,7 +898,7 @@ def main():
             dtype=target_dtype,
             num_batches=eva_num_batches
         )
-        
+            
         # 执行初始化
         initialize_lora_eva_weights(
             model, 
@@ -1101,5 +1101,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
