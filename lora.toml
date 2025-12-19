@@ -141,11 +141,7 @@ use_rslora = true
 #  true        - 默认 (LoRA B=0, A=Kaiming/Gaussian)
 #  "gaussian"  - 全部高斯分布初始化
 #  "olora"     - OLoRA 初始化 (正交初始化)
-#  "eva"       - EVA 初始化，需要正向传播，基于训练数据进行初始化。支持Dora
-init_lora_weights = "eva"
-# 使用eva初始化时使用多少批数据
-eva_num_batches = 50
-eva_tau = 0.3
+init_lora_weights = "olora"
 
 # =============================================================================
 # LoRA 目标模块配置
@@ -181,6 +177,7 @@ gradient_clip_norm = 1.0
 
 # FlashAttention-2 优化
 use_flash_attention_2 = true
+
 
 
 
