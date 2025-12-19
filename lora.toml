@@ -66,13 +66,13 @@ use_cache = true
 gemma3_prompt = "You are an assistant designed to generate high-quality anime images with the highest degree of image-text alignment based on textual prompts. <Prompt Start>\n"
 
 # wandb的api key, 用于查看训练损失与过程 
-wandb_key = ""
+wandb_key = "153aa18816fdbad58f285627f8007c89279bf5a6"
 
 # =============================================================================
 # 训练超参数
 # =============================================================================
 # 批次大小（每次前向传播处理的图像数量）
-train_batch_size = 4
+train_batch_size = 8
 
 # 训练轮数（遍历整个数据集的次数）
 num_epochs = 10
@@ -100,7 +100,7 @@ lr_warmup_steps = 500
 # 梯度检查点
 gradient_checkpointing = true
 # 梯度累积
-gradient_accumulation_steps = 16
+gradient_accumulation_steps = 8
 
 # 混合精度训练
 # 可选值：
@@ -114,11 +114,11 @@ mixed_precision = "bf16"
 # LoRA 配置
 # =============================================================================
 # LoRA rank（秩）
-lora_rank = 128
+lora_rank = 64
 
 # LoRA alpha
 #推荐等于lora_rank
-lora_alpha = 128
+lora_alpha = 64
 
 # LoRA dropout
 # 推荐0.05-0.1或0
@@ -127,7 +127,7 @@ lora_dropout = 0.0
 # 是否训练标准层 TODO
 train_norm = true
 
-# 是否启用DoRA，启用时建议关闭lora_dropout提升性能
+# 是否启用DoRA，启用时建议关闭lora_dropout提升性能，不支持olora和pissa初始化
 use_dora = true
 
 # 是否启用rsLoRA
@@ -142,7 +142,7 @@ use_rslora = true
 #  "gaussian"  - 全部高斯分布初始化
 #  "olora"     - OLoRA 初始化 (正交初始化)
 #  "pissa"     - pissa 初始化 (SVD)
-init_lora_weights = "olora"
+init_lora_weights = true
 
 # =============================================================================
 # LoRA 目标模块配置
@@ -178,54 +178,3 @@ gradient_clip_norm = 1.0
 
 # FlashAttention-2 优化
 use_flash_attention_2 = true
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
