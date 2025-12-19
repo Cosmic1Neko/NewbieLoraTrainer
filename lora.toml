@@ -141,6 +141,7 @@ use_rslora = true
 #  true        - 默认 (LoRA B=0, A=Kaiming/Gaussian)
 #  "gaussian"  - 全部高斯分布初始化
 #  "olora"     - OLoRA 初始化 (正交初始化)
+#  "pissa"     - pissa 初始化 (SVD)
 init_lora_weights = "olora"
 
 # =============================================================================
@@ -177,6 +178,7 @@ gradient_clip_norm = 1.0
 
 # FlashAttention-2 优化
 use_flash_attention_2 = true
+
 
 
 
