@@ -635,6 +635,11 @@ def main():
         project_dir=output_dir,
         kwargs_handlers=[ddp_kwargs]
     )
+    accelerator.init_trackers(
+        project_name="Newbie_LoRA", # 或者从 config 中读取
+        config=tracker_config,
+        init_kwargs={"wandb": {"name": config['Model'].get('output_name', 'run')}} # 设置本次运行的名称
+    )
 
     set_seed(42)
 
@@ -999,6 +1004,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
