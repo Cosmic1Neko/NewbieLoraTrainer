@@ -314,7 +314,6 @@ def setup_lora(model, config):
     lora_dropout = config['Model'].get('lora_dropout', 0.05)
     use_dora=config['Model'].get('use_dora', False)
     use_rslora=config['Model'].get('use_rslora', False)
-    init_lora_weights=config['Model'].get('init_lora_weights', True)
     train_norm=config['Model'].get('train_norm', False)
 
     # 获取目标模块
@@ -337,7 +336,6 @@ def setup_lora(model, config):
         task_type=None,
         use_dora=use_dora,
         use_rslora=use_rslora,
-        init_lora_weights=init_lora_weights,
     )
     
     peft_model = get_peft_model(model, lora_config, low_cpu_mem_usage=False)
@@ -547,38 +545,13 @@ def save_lora_model(accelerator, model, config, step=None):
     os.makedirs(save_dir, exist_ok=True)
 
     unwrapped = accelerator.unwrap_model(model)
-
-    # 获取当前配置，检查初始化方式
-    peft_config = unwrapped.peft_config['default']
-    init_lora_weights = getattr(peft_config, "init_lora_weights", True)
-
-    save_kwargs = {}
-    # 检查是否需要转换
-    if isinstance(init_lora_weights, str) and any(key in init_lora_weights.lower() for key in ["pissa", "olora"]):
-        # 指向已经保存好的 init_model 路径
-        init_model_path = os.path.join(output_dir, "init_model")
-        # 确保该路径存在，否则无法转换
-        if os.path.exists(init_model_path):
-            if accelerator.is_main_process:
-                logger.info(f"Detected {init_lora_weights} init. Converting to standard LoRA using {init_model_path}...")
-            save_kwargs["path_initial_model_for_weight_conversion"] = init_model_path
-        else:
-            logger.warning(f"Warning: {init_lora_weights} used but init_model not found at {init_model_path}. Saving as mutated LoRA (cannot be merged to base model directly).")
             
     unwrapped.save_pretrained(
         save_dir,
         is_main_process=accelerator.is_main_process,
-        #state_dict=accelerator.get_state_dict(model), 
+        state_dict=accelerator.get_state_dict(model), 
         safe_serialization=True,
-        **save_kwargs
     )
-
-    # 确保模型设回训练模式
-    model.train()
-    # 重新激活当前活跃 adapter 的梯度
-    # 对于 PiSSA/OLoRA 这种会修改基础权重的 adapter，这一步非常重要
-    active_adapter = unwrapped.active_adapter
-    unwrapped.set_adapter(active_adapter)
 
     if accelerator.is_main_process:
         logger.info(f"PEFT LoRA model saved to: {save_dir}")
@@ -819,16 +792,6 @@ def main():
         
     print_memory_usage("Before LoRA", args.profiler)
     model = setup_lora(model, config)
-    # 为pissa/olora保存初始状态，用于标准LoRA的转化
-    if accelerator.is_main_process:
-        peft_config = model.peft_config['default']
-        init_lora_weights = getattr(peft_config, "init_lora_weights", True)
-        if isinstance(init_lora_weights, str) and any(key in init_lora_weights.lower() for key in ["pissa", "olora"]):
-            init_model_path = os.path.join(output_dir, "init_model")
-            if not os.path.exists(init_model_path):
-                logger.info(f"Saving initialized {init_lora_weights} model to {init_model_path} for later conversion...")
-                model.save_pretrained(init_model_path)
-    accelerator.wait_for_everyone()
     model.to(accelerator.device)
     if text_encoder: text_encoder.to(accelerator.device)
     if vae: vae.to(accelerator.device)
@@ -1024,3 +987,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
