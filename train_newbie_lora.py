@@ -547,7 +547,7 @@ def save_lora_model(accelerator, model, config, step=None):
     os.makedirs(save_dir, exist_ok=True)
 
     unwrapped = accelerator.unwrap_model(model)
-    """
+
     # 获取当前配置，检查初始化方式
     peft_config = unwrapped.peft_config['default']
     init_lora_weights = getattr(peft_config, "init_lora_weights", True)
@@ -557,7 +557,6 @@ def save_lora_model(accelerator, model, config, step=None):
     if isinstance(init_lora_weights, str) and any(key in init_lora_weights.lower() for key in ["pissa", "olora"]):
         # 指向已经保存好的 init_model 路径
         init_model_path = os.path.join(output_dir, "init_model")
-        
         # 确保该路径存在，否则无法转换
         if os.path.exists(init_model_path):
             if accelerator.is_main_process:
@@ -569,51 +568,17 @@ def save_lora_model(accelerator, model, config, step=None):
     unwrapped.save_pretrained(
         save_dir,
         is_main_process=accelerator.is_main_process,
-        state_dict=accelerator.get_state_dict(model), 
+        #state_dict=accelerator.get_state_dict(model), 
         safe_serialization=True,
         **save_kwargs
     )
-    """
-    # 1. 获取当前状态字典
-    # 注意：在 DDP 模式下，必须使用 accelerator.get_state_dict
-    raw_state_dict = accelerator.get_state_dict(model)
 
-    # 2. 核心修复逻辑：手动清洗键名
-    # PEFT 的转换逻辑会去掉键名的第一部分。如果我们的键名是 base_model.model.xxx
-    # 去掉后变成 model.xxx，这依然对不上 init_model 里的 xxx。
-    # 我们这里统一把 base_model. 前缀去掉。
-    processed_state_dict = {}
-    for k, v in raw_state_dict.items():
-        if k.startswith("base_model."):
-            # 变成 model.noise_refiner... 或者 noise_refiner...
-            # 建议根据你 init_model 的实际键名来决定。
-            # 如果 init_model 里的键名是 "noise_refiner..."，
-            # 那么这里我们要确保传给 PEFT 的键名切分后能对上。
-            new_k = k.replace("base_model.", "")
-            processed_state_dict[new_k] = v
-        else:
-            processed_state_dict[k] = v
-
-    # 获取当前配置，检查初始化方式
-    peft_config = unwrapped.peft_config['default']
-    init_lora_weights = getattr(peft_config, "init_lora_weights", True)
-
-    save_kwargs = {}
-    if isinstance(init_lora_weights, str) and any(key in init_lora_weights.lower() for key in ["pissa", "olora"]):
-        init_model_path = os.path.join(output_dir, "init_model")
-        if os.path.exists(init_model_path):
-            if accelerator.is_main_process:
-                logger.info(f"Detected {init_lora_weights} init. Converting using {init_model_path}...")
-            save_kwargs["path_initial_model_for_weight_conversion"] = init_model_path
-
-    # 3. 传入清洗后的 state_dict
-    unwrapped.save_pretrained(
-        save_dir,
-        is_main_process=accelerator.is_main_process,
-        state_dict=processed_state_dict,  # 使用清洗过的键名
-        safe_serialization=True,
-        **save_kwargs
-    )
+    # 确保模型设回训练模式
+    model.train()
+    # 重新激活当前活跃 adapter 的梯度
+    # 对于 PiSSA/OLoRA 这种会修改基础权重的 adapter，这一步非常重要
+    active_adapter = unwrapped.active_adapter
+    unwrapped.set_adapter(active_adapter)
 
     if accelerator.is_main_process:
         logger.info(f"PEFT LoRA model saved to: {save_dir}")
@@ -854,6 +819,7 @@ def main():
         
     print_memory_usage("Before LoRA", args.profiler)
     model = setup_lora(model, config)
+    # 为pissa/olora保存初始状态，用于标准LoRA的转化
     if accelerator.is_main_process:
         peft_config = model.peft_config['default']
         init_lora_weights = getattr(peft_config, "init_lora_weights", True)
@@ -868,11 +834,6 @@ def main():
     if vae: vae.to(accelerator.device)
     if clip_model: clip_model.to(accelerator.device)
     print_memory_usage("After LoRA", args.profiler)
-
-    # 另存基础模型(基础权重被修改)，用于 PiSSA/OLoRA 转换
-    init_model_path = os.path.join(output_dir, "init_model")
-    if not os.path.exists(init_model_path): 
-        unwrapped.save_pretrained(init_model_path) 
     
     if config['Model'].get('gradient_checkpointing', True):
         model.gradient_checkpointing_enable()
@@ -1063,4 +1024,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
