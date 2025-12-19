@@ -136,14 +136,6 @@ use_dora = true
 # △W (LoRA)的标准差与sqrt(r)成正比，因此必须根据r进行缩放，类似Kaiming初始化
 use_rslora = true
 
-# LoRA权重初始化方式
-# 常见选项: 
-#  true        - 默认 (LoRA B=0, A=Kaiming/Gaussian)
-#  "gaussian"  - 全部高斯分布初始化
-#  "olora"     - OLoRA 初始化 (正交初始化)
-#  "pissa"     - pissa 初始化 (SVD)
-init_lora_weights = true
-
 # =============================================================================
 # LoRA 目标模块配置
 # =============================================================================
@@ -178,4 +170,5 @@ gradient_clip_norm = 1.0
 
 # FlashAttention-2 优化
 use_flash_attention_2 = true
+
 
