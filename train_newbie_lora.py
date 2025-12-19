@@ -548,21 +548,23 @@ def save_lora_model(accelerator, model, config, step=None):
 
     unwrapped = accelerator.unwrap_model(model)
 
-    # 另存基础模型(基础权重被修改)，用于 PiSSA/OLoRA 转换
-    init_model_path = os.path.join(output_dir, "init_model")
-    if not os.path.exists(init_model_path): 
-        unwrapped.save_pretrained(init_model_path) 
-
     # 获取当前配置，检查初始化方式
     peft_config = unwrapped.peft_config['default']
     init_lora_weights = getattr(peft_config, "init_lora_weights", True)
 
-    # 如果是 PiSSA 或 OLoRA，启用转换模式
     save_kwargs = {}
+    # 检查是否需要转换
     if isinstance(init_lora_weights, str) and any(key in init_lora_weights.lower() for key in ["pissa", "olora"]):
-        if accelerator.is_main_process:
-            logger.info(f"Detected {init_lora_weights} initialization. Converting to standard LoRA for plug-and-play compatibility...")
+        # 指向已经保存好的 init_model 路径
+        init_model_path = os.path.join(output_dir, "init_model")
+        
+        # 确保该路径存在，否则无法转换
+        if os.path.exists(init_model_path):
+            if accelerator.is_main_process:
+                logger.info(f"Detected {init_lora_weights} init. Converting to standard LoRA using {init_model_path}...")
             save_kwargs["path_initial_model_for_weight_conversion"] = init_model_path
+        else:
+            logger.warning(f"Warning: {init_lora_weights} used but init_model not found at {init_model_path}. Saving as mutated LoRA (cannot be merged to base model directly).")
             
     unwrapped.save_pretrained(
         save_dir,
@@ -665,7 +667,6 @@ def main():
     drop_artist_rate = config['Model'].get('drop_artist_rate', 0.0)
     use_multires_loss = config['Model'].get('use_multires_loss', True)
     multires_factor = config['Model'].get('multires_factor', 4)
-    eva_num_batches = config['Model'].get('eva_num_batches', 100)
 
     if use_cache:
         logger.info("Checking if VAE cache files exist...")
@@ -812,11 +813,25 @@ def main():
         
     print_memory_usage("Before LoRA", args.profiler)
     model = setup_lora(model, config)
+    if accelerator.is_main_process:
+        peft_config = model.peft_config['default']
+        init_lora_weights = getattr(peft_config, "init_lora_weights", True)
+        if isinstance(init_lora_weights, str) and any(key in init_lora_weights.lower() for key in ["pissa", "olora"]):
+            init_model_path = os.path.join(output_dir, "init_model")
+            if not os.path.exists(init_model_path):
+                logger.info(f"Saving initialized {init_lora_weights} model to {init_model_path} for later conversion...")
+                model.save_pretrained(init_model_path)
+    accelerator.wait_for_everyone()
     model.to(accelerator.device)
     if text_encoder: text_encoder.to(accelerator.device)
     if vae: vae.to(accelerator.device)
     if clip_model: clip_model.to(accelerator.device)
     print_memory_usage("After LoRA", args.profiler)
+
+    # 另存基础模型(基础权重被修改)，用于 PiSSA/OLoRA 转换
+    init_model_path = os.path.join(output_dir, "init_model")
+    if not os.path.exists(init_model_path): 
+        unwrapped.save_pretrained(init_model_path) 
     
     if config['Model'].get('gradient_checkpointing', True):
         model.gradient_checkpointing_enable()
@@ -1007,12 +1022,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
-
-
-
-
-
-
-
