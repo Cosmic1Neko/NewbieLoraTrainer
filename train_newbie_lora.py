@@ -53,85 +53,6 @@ def apply_average_pool(latent, factor=4):
         torch.Tensor: Downsampled latent tensor.
     """
     return torch.nn.functional.avg_pool2d(latent, kernel_size=factor, stride=factor)
-
-class EVADataloader:
-    """
-    EVA 初始化用的 Dataloader 包装类。
-    """
-    def __init__(self, dataloader, device, vae, text_encoder, tokenizer, clip_model, clip_tokenizer, transport, gemma3_prompt, dtype, num_batches=100):
-        self.dataloader = dataloader
-        self.device = device
-        self.vae = vae
-        self.text_encoder = text_encoder
-        self.tokenizer = tokenizer
-        self.clip_model = clip_model
-        self.clip_tokenizer = clip_tokenizer
-        self.transport = transport
-        self.gemma3_prompt = gemma3_prompt
-        self.dtype = dtype
-        self.num_batches = num_batches
-
-    def __len__(self):
-        return self.num_batches
-
-    def __iter__(self):
-        iter_loader = iter(self.dataloader)
-        
-        for _ in range(self.num_batches):
-            try:
-                batch = next(iter_loader)
-            except StopIteration:
-                # 如果 dataloader 用尽，重新创建迭代器
-                iter_loader = iter(self.dataloader)
-                batch = next(iter_loader)
-                
-            # 1. 准备 Latents 和 Caption Embeddings
-            if batch.get("cached", False):
-                latents = batch["latents"].to(self.device, dtype=self.dtype)
-                captions = batch["captions"]
-            else:
-                pixel_values = batch["pixel_values"].to(self.device, dtype=self.vae.dtype)
-                captions = batch["captions"]
-                with torch.no_grad():
-                    # VAE Encode
-                    latents = self.vae.encode(pixel_values).latent_dist.sample()
-                    scaling_factor = getattr(self.vae.config, 'scaling_factor', 0.3611)
-                    shift_factor = getattr(self.vae.config, 'shift_factor', 0.1159)
-                    latents = (latents - shift_factor) * scaling_factor
-
-            # 2. 准备 Text Embeddings
-            with torch.no_grad():
-                # Gemma Text Encode
-                gemma_texts = [self.gemma3_prompt + cap if self.gemma3_prompt else cap for cap in captions]
-                gemma_inputs = self.tokenizer(
-                    gemma_texts, padding=True, pad_to_multiple_of=8,
-                    truncation=True, max_length=1280, return_tensors="pt"
-                ).to(self.device)
-                gemma_outputs = self.text_encoder(**gemma_inputs, output_hidden_states=True)
-                cap_feats = gemma_outputs.hidden_states[-2].to(dtype=self.dtype)
-                cap_mask = gemma_inputs.attention_mask.to(self.device)
-                
-                # CLIP Text Encode
-                clip_inputs = self.clip_tokenizer(
-                    captions, padding=True, truncation=True,
-                    max_length=2048, return_tensors="pt"
-                ).to(self.device)
-                clip_text_pooled = self.clip_model.get_text_features(**clip_inputs).to(dtype=self.dtype)
-
-            # 3. 使用 Transport 进行加噪
-            with torch.no_grad():
-                # 采样时间步 t 和噪声 x0
-                t, x0, x1 = self.transport.sample(latents)
-                t, xt, ut = self.transport.path_sampler.plan(t, x0, x1)
-
-            # 4. 返回匹配 model.forward 参数的字典
-            yield {
-                "x": xt.to(self.dtype).cpu(),
-                "t": t.to(self.dtype).cpu(),
-                "cap_feats": cap_feats.cpu(),
-                "cap_mask": cap_mask.cpu(),
-                "clip_text_pooled": clip_text_pooled.cpu()
-            }
     
 def load_encoders_only(config):
     base_model_path = config['Model']['base_model_path']
@@ -395,13 +316,7 @@ def setup_lora(model, config):
     use_rslora=config['Model'].get('use_rslora', False)
     init_lora_weights=config['Model'].get('init_lora_weights', True)
     train_norm=config['Model'].get('train_norm', False)
-    eva_tau=config['Model'].get('eva_tau', 0.99)
 
-    # EVA
-    eva_config = None
-    if init_lora_weights == "eva":
-        eva_config = EvaConfig(rho=1.0, tau=eva_tau)
-    
     # 获取目标模块
     default_target_modules = [
         "attention.qkv",
@@ -423,7 +338,6 @@ def setup_lora(model, config):
         use_dora=use_dora,
         use_rslora=use_rslora,
         init_lora_weights=init_lora_weights,
-        eva_config=eva_config,
     )
     
     peft_model = get_peft_model(model, lora_config, low_cpu_mem_usage=False)
@@ -876,42 +790,6 @@ def main():
     if clip_model: clip_model.to(accelerator.device)
     print_memory_usage("After LoRA", args.profiler)
     
-    # 执行 EVA 初始化
-    init_method = config['Model'].get('init_lora_weights', True)
-    if init_method == "eva":
-        logger.info("Initializing LoRA weights with EVA (Explained Variance Adaptation)...")
-        
-        # 准备模型的数据类型
-        target_dtype = torch.bfloat16 if mixed_precision == 'bf16' else (torch.float16 if mixed_precision == 'fp16' else torch.float32)
-        
-        # 创建数据生成器
-        data_gen = EVADataloader(
-            dataloader=train_dataloader,
-            device=accelerator.device,
-            vae=vae,
-            text_encoder=text_encoder,
-            tokenizer=tokenizer,
-            clip_model=clip_model,
-            clip_tokenizer=clip_tokenizer,
-            transport=transport,
-            gemma3_prompt=gemma3_prompt,
-            dtype=target_dtype,
-            num_batches=eva_num_batches
-        )
-            
-        # 执行初始化
-        initialize_lora_eva_weights(
-            model, 
-            data_gen,
-            prepare_model_inputs_fn=None,  # 禁用 LLM 的 mask 检查
-            prepare_layer_inputs_fn=None   # 使用默认的 flatten 策略，适合视觉模型
-        )
-        
-        logger.info("EVA initialization complete.")
-        
-        # 等待所有进程同步（如果使用 DDP）
-        accelerator.wait_for_everyone()
-    
     if config['Model'].get('gradient_checkpointing', True):
         model.gradient_checkpointing_enable()
         logger.info("Gradient checkpointing enabled")
@@ -1101,6 +979,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
