@@ -679,7 +679,7 @@ def main():
         logger.info("Loading encoders...")
         vae, text_encoder, tokenizer, clip_model, clip_tokenizer = load_encoders_only(config)
 
-        if not cache_complete:
+        if not cache_complete and accelerator.is_main_process:
             logger.info("Cache incomplete, generating VAE latents...")
             dataset = ImageCaptionDataset(
                 train_data_dir=train_data_dir,
@@ -702,7 +702,8 @@ def main():
             import gc
             gc.collect()
             torch.cuda.empty_cache()
-
+        accelerator.wait_for_everyone()
+        
         logger.info("Unloading VAE to save memory (using cached latents)...")
         del vae
         import gc
@@ -998,6 +999,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
