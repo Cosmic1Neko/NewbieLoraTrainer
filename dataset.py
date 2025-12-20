@@ -437,10 +437,10 @@ class BucketBatchSampler:
         self.batch_size = batch_size
         self.shuffle = shuffle
         self.seed = seed
-        self.epoch = 0
-        self._first_epoch_sorted = False
         self.num_replicas = num_replicas
         self.rank = rank
+        self.epoch = 0
+        self._first_epoch_sorted = False
 
         self.bucket_to_indices = {}
         for idx in range(len(dataset)):
@@ -451,11 +451,12 @@ class BucketBatchSampler:
             for _ in range(dataset.repeats[idx]):
                 self.bucket_to_indices[bucket_reso].append(idx)
 
+        # 计算全局总 batch 数（仅用于日志，实际长度在 __len__ 中计算）
         total_batches = sum(math.ceil(len(indices) / batch_size) for indices in self.bucket_to_indices.values())
         logger.info(f"BucketBatchSampler: {len(self.bucket_to_indices)} buckets, {total_batches} batches (Global)")
 
     def __iter__(self):
-        # 确保所有进程使用相同的随机种子，这样它们生成的 global batches 顺序才是一致的
+        # 确保每个 epoch 的随机种子不同，且各卡同步
         rng = random.Random(self.seed + self.epoch)
 
         bucket_batches = []
@@ -473,14 +474,23 @@ class BucketBatchSampler:
 
         if self.shuffle:
             if not self._first_epoch_sorted:
+                # 第一个 epoch 按面积排序，减少显存碎片
                 bucket_batches.sort(key=lambda x: x["area"], reverse=True)
                 self._first_epoch_sorted = True
             else:
                 rng.shuffle(bucket_batches)
 
-        # === 分布式切分 ===
-        # 根据 rank 和 num_replicas 对 batch 列表进行切片
-        # 假设有 2 张卡，rank 0 取 0, 2, 4...; rank 1 取 1, 3, 5...
+        # ==========================================
+        # 处理 DDP 数据分配，防止死锁
+        # ==========================================
+        total_len = len(bucket_batches)
+        # 计算需要丢弃的 batch 数量，确保能被 GPU 数整除
+        remainder = total_len % self.num_replicas
+        if remainder > 0:
+            # 丢弃末尾多余的 batch，保证所有 GPU 步数一致
+            bucket_batches = bucket_batches[: -remainder]
+        
+        # 分布式切片：Rank 0 拿 0, 2, 4...; Rank 1 拿 1, 3, 5...
         local_batches = bucket_batches[self.rank::self.num_replicas]
 
         for entry in local_batches:
@@ -488,9 +498,12 @@ class BucketBatchSampler:
 
     def __len__(self):
         # 计算全局总 batch 数
-        total_len = sum(math.ceil(len(indices) / self.batch_size) for indices in self.bucket_to_indices.values())
-        # 计算当前 rank 分配到的 batch 数
-        return (total_len - self.rank + self.num_replicas - 1) // self.num_replicas
+        total_batches = sum(math.ceil(len(indices) / self.batch_size) for indices in self.bucket_to_indices.values())
+        # 减去会被丢弃的部分
+        remainder = total_batches % self.num_replicas
+        adjusted_total = total_batches - remainder
+        # 返回单卡上的 batch 数
+        return adjusted_total // self.num_replicas
 
     def set_epoch(self, epoch):
         self.epoch = epoch
