@@ -430,13 +430,15 @@ class ImageCaptionDataset(Dataset):
 
 
 class BucketBatchSampler:
-    def __init__(self, dataset, batch_size, shuffle=True, seed=42):
+    def __init__(self, dataset, batch_size, shuffle=True, seed=42, num_replicas=1, rank=0):
         self.dataset = dataset
         self.batch_size = batch_size
         self.shuffle = shuffle
         self.seed = seed
         self.epoch = 0
         self._first_epoch_sorted = False
+        self.num_replicas = num_replicas
+        self.rank = rank
 
         self.bucket_to_indices = {}
         for idx in range(len(dataset)):
@@ -448,9 +450,10 @@ class BucketBatchSampler:
                 self.bucket_to_indices[bucket_reso].append(idx)
 
         total_batches = sum(math.ceil(len(indices) / batch_size) for indices in self.bucket_to_indices.values())
-        logger.info(f"BucketBatchSampler: {len(self.bucket_to_indices)} buckets, {total_batches} batches")
+        logger.info(f"BucketBatchSampler: {len(self.bucket_to_indices)} buckets, {total_batches} batches (Global)")
 
     def __iter__(self):
+        # 确保所有进程使用相同的随机种子，这样它们生成的 global batches 顺序才是一致的
         rng = random.Random(self.seed + self.epoch)
 
         bucket_batches = []
@@ -473,11 +476,19 @@ class BucketBatchSampler:
             else:
                 rng.shuffle(bucket_batches)
 
-        for entry in bucket_batches:
+        # === 分布式切分 ===
+        # 根据 rank 和 num_replicas 对 batch 列表进行切片
+        # 假设有 2 张卡，rank 0 取 0, 2, 4...; rank 1 取 1, 3, 5...
+        local_batches = bucket_batches[self.rank::self.num_replicas]
+
+        for entry in local_batches:
             yield entry["batch"]
 
     def __len__(self):
-        return sum(math.ceil(len(indices) / self.batch_size) for indices in self.bucket_to_indices.values())
+        # 计算全局总 batch 数
+        total_len = sum(math.ceil(len(indices) / self.batch_size) for indices in self.bucket_to_indices.values())
+        # 计算当前 rank 分配到的 batch 数
+        return (total_len - self.rank + self.num_replicas - 1) // self.num_replicas
 
     def set_epoch(self, epoch):
         self.epoch = epoch
