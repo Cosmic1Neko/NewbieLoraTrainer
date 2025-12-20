@@ -605,7 +605,7 @@ def main():
     output_dir = config['Model']['output_dir']    
     os.makedirs(output_dir, exist_ok=True)
 
-    ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
+    ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=False)
     accelerator = Accelerator(
         mixed_precision=config['Model'].get('mixed_precision', 'no'),
         gradient_accumulation_steps=gradient_accumulation_steps,
@@ -1001,6 +1001,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
