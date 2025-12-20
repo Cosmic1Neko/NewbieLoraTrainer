@@ -813,7 +813,7 @@ def main():
     scheduler, num_training_steps = setup_scheduler(optimizer, config, train_dataloader)
 
     print_memory_usage("Before accelerator.prepare", args.profiler)
-    model, optimizer, train_dataloader, scheduler = accelerator.prepare(model, optimizer, train_dataloader, scheduler)
+    model, optimizer, scheduler = accelerator.prepare(model, optimizer, scheduler)
     print_memory_usage("After accelerator.prepare", args.profiler)
     
     """
@@ -994,3 +994,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
