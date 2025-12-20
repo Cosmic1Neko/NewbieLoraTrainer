@@ -876,10 +876,14 @@ def main():
     max_grad_norm = config['Optimization'].get('gradient_clip_norm', 1.0)
     save_epochs_interval = config['Model'].get('save_epochs_interval', 0)
 
-    steps_per_epoch = len(train_dataloader)
-    start_epoch = start_step // steps_per_epoch
-    steps_to_skip_in_first_epoch = start_step % steps_per_epoch
-
+    #steps_per_epoch = len(train_dataloader)
+    #start_epoch = start_step // steps_per_epoch
+    #steps_to_skip_in_first_epoch = start_step % steps_per_epoch
+    num_update_steps_per_epoch = math.ceil(len(train_dataloader) / gradient_accumulation_steps)
+    start_epoch = start_step // num_update_steps_per_epoch
+    resume_step_in_epoch = start_step % num_update_steps_per_epoch
+    steps_to_skip_in_first_epoch = resume_step_in_epoch * gradient_accumulation_steps
+    
     if start_step > 0:
         logger.info(f"Resuming from epoch {start_epoch+1}, will skip {steps_to_skip_in_first_epoch} steps in first epoch")
         
@@ -1002,6 +1006,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
