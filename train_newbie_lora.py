@@ -812,7 +812,10 @@ def main():
     scheduler, num_training_steps = setup_scheduler(optimizer, config, train_dataloader)
 
     print_memory_usage("Before accelerator.prepare", args.profiler)
-    model, optimizer, scheduler = accelerator.prepare(model, optimizer, scheduler)
+    if config['Model'].get('enable_bucket', True):
+        model, optimizer, scheduler = accelerator.prepare(model, optimizer, scheduler)
+    else:
+        model, optimizer, scheduler, train_dataloader = accelerator.prepare(model, optimizer, scheduler, train_dataloader)
     print_memory_usage("After accelerator.prepare", args.profiler)
     
     """
@@ -993,5 +996,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
