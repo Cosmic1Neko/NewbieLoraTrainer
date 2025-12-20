@@ -724,6 +724,7 @@ class NextDiT(nn.Module):
             imgs = torch.stack(imgs, dim=0)
         return imgs
 
+    @torch.compiler.disable
     def patchify_and_embed(
         self, x: List[torch.Tensor] | torch.Tensor, cap_feats: torch.Tensor, cap_mask: torch.Tensor, t: torch.Tensor
     ) -> Tuple[torch.Tensor, torch.Tensor, List[Tuple[int, int]], List[int], torch.Tensor]:
@@ -1412,3 +1413,4 @@ def NextDiT_3B_GQA_patch2_Adaln_Refiner_WHIT_CLIP(**kwargs):
         axes_lens=[1024, 512, 512],
         **kwargs
     )
+
