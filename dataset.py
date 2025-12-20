@@ -91,6 +91,8 @@ class ImageCaptionDataset(Dataset):
         logger.info(f"Loading data from: {self.train_data_dir}")
 
         for root, _, files in os.walk(self.train_data_dir):
+            files.sort()
+            
             dir_name = os.path.basename(root)
             repeats = int(dir_name.split('_')[0]) if '_' in dir_name and dir_name[0].isdigit() else 1
 
