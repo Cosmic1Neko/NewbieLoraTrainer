@@ -546,14 +546,13 @@ def save_lora_model(accelerator, model, config, step=None):
 
     unwrapped = accelerator.unwrap_model(model)
             
-    unwrapped.save_pretrained(
-        save_dir,
-        is_main_process=accelerator.is_main_process,
-        state_dict=accelerator.get_state_dict(model), 
-        safe_serialization=True,
-    )
-
     if accelerator.is_main_process:
+        unwrapped.save_pretrained(
+            save_dir,
+            is_main_process=accelerator.is_main_process,
+            state_dict=accelerator.get_state_dict(model), 
+            safe_serialization=True,
+        )
         logger.info(f"PEFT LoRA model saved to: {save_dir}")
 
 def load_checkpoint(accelerator, model, optimizer, scheduler, config):
@@ -994,4 +993,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
