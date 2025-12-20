@@ -768,7 +768,14 @@ def main():
     batch_size = config['Model']['train_batch_size']
 
     if config['Model'].get('enable_bucket', True):
-        batch_sampler = BucketBatchSampler(dataset, batch_size=batch_size, shuffle=True, seed=42)
+        batch_sampler = BucketBatchSampler(
+            dataset, 
+            batch_size=batch_size, 
+            shuffle=True, 
+            seed=42,
+            num_replicas=accelerator.num_processes,
+            rank=accelerator.process_index
+        )
         train_dataloader = DataLoader(
             dataset,
             batch_sampler=batch_sampler,
@@ -801,7 +808,7 @@ def main():
     if config['Model'].get('gradient_checkpointing', True):
         model.gradient_checkpointing_enable()
         logger.info("Gradient checkpointing enabled")
-
+    
     optimizer = setup_optimizer(model, config)
     scheduler, num_training_steps = setup_scheduler(optimizer, config, train_dataloader)
 
@@ -987,5 +994,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
