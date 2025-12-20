@@ -611,7 +611,7 @@ def main():
         gradient_accumulation_steps=gradient_accumulation_steps,
         log_with="wandb",
         project_dir=output_dir,
-        kwargs_handlers=[ddp_kwargs]
+        kwargs_handlers=[ddp_kwargs],
         step_scheduler_with_optimizer=False
     )
     if accelerator.is_main_process:
@@ -1001,6 +1001,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
