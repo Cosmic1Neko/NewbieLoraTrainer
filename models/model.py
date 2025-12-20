@@ -941,6 +941,8 @@ class NextDiT(nn.Module):
         t: (N,) tensor of diffusion timesteps
         y: (N,) tensor of text tokens/features
         """
+        if self.gradient_checkpointing and self.training:
+            x.requires_grad_(True)
 
         # import torch.distributed as dist
         # if not dist.is_initialized() or dist.get_rank() == 0:
@@ -1413,4 +1415,5 @@ def NextDiT_3B_GQA_patch2_Adaln_Refiner_WHIT_CLIP(**kwargs):
         axes_lens=[1024, 512, 512],
         **kwargs
     )
+
 
