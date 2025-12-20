@@ -809,6 +809,12 @@ def main():
         logger.info("Gradient checkpointing enabled")
     
     optimizer = setup_optimizer(model, config)
+
+    lr_warmup_steps = config['Model'].get('lr_warmup_steps', 100)
+    if accelerator.num_processes > 1:
+        lr_warmup_steps = int(lr_warmup_steps / accelerator.num_processes)
+        logger.info(f"DDP detected: Scaled warmup steps to {lr_warmup_steps} (Original: {config['Model'].get('lr_warmup_steps', 100)})")
+    config['Model']['lr_warmup_steps'] = lr_warmup_steps
     scheduler, num_training_steps = setup_scheduler(optimizer, config, train_dataloader)
 
     print_memory_usage("Before accelerator.prepare", args.profiler)
@@ -996,6 +1002,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
