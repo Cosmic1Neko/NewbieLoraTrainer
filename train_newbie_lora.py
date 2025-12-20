@@ -806,7 +806,6 @@ def main():
     
     if config['Model'].get('gradient_checkpointing', True):
         model.gradient_checkpointing_enable()
-        model.enable_input_require_grads()
         logger.info("Gradient checkpointing enabled")
     
     optimizer = setup_optimizer(model, config)
@@ -1007,6 +1006,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
