@@ -612,6 +612,7 @@ def main():
         log_with="wandb",
         project_dir=output_dir,
         kwargs_handlers=[ddp_kwargs]
+        step_scheduler_with_optimizer=False
     )
     if accelerator.is_main_process:
         tracker_config = {
@@ -1000,6 +1001,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
