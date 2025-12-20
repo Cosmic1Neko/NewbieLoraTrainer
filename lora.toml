@@ -72,7 +72,7 @@ wandb_key = ""
 # 训练超参数
 # =============================================================================
 # 批次大小（每次前向传播处理的图像数量）
-train_batch_size = 8
+train_batch_size = 1
 
 # 训练轮数（遍历整个数据集的次数）
 num_epochs = 10
@@ -98,9 +98,9 @@ lr_scheduler = "cosine"
 lr_warmup_steps = 500
 
 # 梯度检查点
-gradient_checkpointing = true
+gradient_checkpointing = false
 # 梯度累积
-gradient_accumulation_steps = 8
+gradient_accumulation_steps = 32
 
 # 混合精度训练
 # 可选值：
@@ -114,11 +114,11 @@ mixed_precision = "bf16"
 # LoRA 配置
 # =============================================================================
 # LoRA rank（秩）
-lora_rank = 64
+lora_rank = 96
 
 # LoRA alpha
 #推荐等于lora_rank
-lora_alpha = 64
+lora_alpha = 96
 
 # LoRA dropout
 # 推荐0.05-0.1或0
@@ -170,5 +170,6 @@ gradient_clip_norm = 1.0
 
 # FlashAttention-2 优化
 use_flash_attention_2 = true
+
 
 
