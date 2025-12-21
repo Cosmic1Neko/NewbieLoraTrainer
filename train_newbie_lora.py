@@ -481,7 +481,8 @@ def compute_loss(model, vae, text_encoder, tokenizer, clip_model, clip_tokenizer
 
     with torch.no_grad():
         # Gemma 编码
-        gemma_texts = [gemma3_prompt + cap if gemma3_prompt else cap for cap in captions]
+        #gemma_texts = [gemma3_prompt + cap if gemma3_prompt else cap for cap in captions]
+        gemma_texts = [(gemma3_prompt + cap) if (gemma3_prompt and cap) else cap for cap in captions]
         gemma_inputs = tokenizer(
             gemma_texts, padding=True, pad_to_multiple_of=8,
             truncation=True, max_length=1280, return_tensors="pt"
@@ -1028,6 +1029,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
