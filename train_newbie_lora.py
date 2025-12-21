@@ -536,24 +536,52 @@ def save_checkpoint(accelerator, model, optimizer, scheduler, step, config):
 
 
 def save_lora_model(accelerator, model, config, step=None):
-    """Save adapter weights"""
+    """Save adapter weights (PEFT format & ComfyUI compatible format)"""
     output_dir = config['Model']['output_dir']
     output_name = config['Model']['output_name']
     os.makedirs(output_dir, exist_ok=True)
 
+    # 1. 准备 PEFT 格式的保存目录 (用于 Resume 或 HuggingFace)
     save_dir = os.path.join(output_dir, f"{output_name}_step_{step}" if step else output_name)
     os.makedirs(save_dir, exist_ok=True)
 
     unwrapped = accelerator.unwrap_model(model)
+    # 获取原始权重的 state_dict
+    raw_state_dict = accelerator.get_state_dict(model)
             
     if accelerator.is_main_process:
+        # --- A. 保存标准 PEFT 格式 ---
         unwrapped.save_pretrained(
             save_dir,
             is_main_process=accelerator.is_main_process,
-            state_dict=accelerator.get_state_dict(model), 
+            state_dict=raw_state_dict, 
             safe_serialization=True,
         )
         logger.info(f"PEFT LoRA model saved to: {save_dir}")
+
+        # --- B. 保存 ComfyUI 兼容格式 ---
+        comfy_state_dict = {}
+        for key, value in raw_state_dict.items():
+            # 1. 替换前缀: base_model.model. -> diffusion_model.
+            new_key = key.replace("base_model.model.", "diffusion_model.")
+            
+            # 2. 转换 DoRA Key: lora_magnitude_vector -> dora_scale
+            if "lora_magnitude_vector" in new_key:
+                new_key = new_key.replace("lora_magnitude_vector", "dora_scale")
+            
+            comfy_state_dict[new_key] = value
+        
+        # 构造单文件文件名 (例如: MyLoRA_step_1000.safetensors)
+        if step:
+            comfy_filename = f"{output_name}_step_{step}.safetensors"
+        else:
+            comfy_filename = f"{output_name}.safetensors"
+            
+        comfy_path = os.path.join(output_dir, comfy_filename)
+        
+        # 保存 ComfyUI 专用文件
+        save_file(comfy_state_dict, comfy_path)
+        logger.info(f"ComfyUI compatible LoRA saved to: {comfy_path}")
 
 def load_checkpoint(accelerator, model, optimizer, scheduler, config):
     checkpoint_dir = os.path.join(config['Model']['output_dir'], "checkpoints")
@@ -1001,6 +1029,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
