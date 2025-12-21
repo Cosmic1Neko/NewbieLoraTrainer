@@ -546,8 +546,8 @@ def save_lora_model(accelerator, model, config, step=None):
     os.makedirs(save_dir, exist_ok=True)
 
     unwrapped = accelerator.unwrap_model(model)
-    # 获取原始权重的 state_dict
-    raw_state_dict = accelerator.get_state_dict(model)
+    # 使用 get_peft_model_state_dict 获取仅包含 LoRA 权重的字典
+    lora_state_dict = get_peft_model_state_dict(unwrapped)
             
     if accelerator.is_main_process:
         # --- A. 保存标准 PEFT 格式 ---
@@ -561,7 +561,7 @@ def save_lora_model(accelerator, model, config, step=None):
 
         # --- B. 保存 ComfyUI 兼容格式 ---
         comfy_state_dict = {}
-        for key, value in raw_state_dict.items():
+        for key, value in lora_state_dict.items():
             # 1. 替换前缀: base_model.model. -> diffusion_model.
             new_key = key.replace("base_model.model.", "diffusion_model.")
             
@@ -1029,6 +1029,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
