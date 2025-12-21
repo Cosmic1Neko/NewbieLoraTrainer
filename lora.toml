@@ -60,7 +60,7 @@ enable_bucket = true
 # true: 预先缓存 VAE latents, 加速训练并节省显存
 # false: 每次实时编码（慢，但不占用磁盘空间）
 # 缓存文件保存在数据集同目录：图片.safetensors,
-use_cache = true
+use_cache = false
 
 # Gemma3 系统提示词（仅用于 Gemma3，不影响 Jina CLIP）
 gemma3_prompt = "You are an assistant designed to generate high-quality anime images with the highest degree of image-text alignment based on textual prompts. <Prompt Start>\n"
@@ -170,6 +170,7 @@ gradient_clip_norm = 1.0
 
 # FlashAttention-2 优化
 use_flash_attention_2 = true
+
 
 
 
