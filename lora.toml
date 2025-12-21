@@ -95,7 +95,7 @@ learning_rate = 2e-4
 lr_scheduler = "cosine"
 
 # 学习率预热步数
-lr_warmup_steps = 500
+lr_warmup_steps = 1000
 
 # 梯度检查点
 gradient_checkpointing = false
@@ -170,6 +170,7 @@ gradient_clip_norm = 1.0
 
 # FlashAttention-2 优化
 use_flash_attention_2 = true
+
 
 
 
