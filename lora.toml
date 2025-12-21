@@ -25,7 +25,7 @@ train_data_dir = "/root/autodl-tmp/datasets"
 # 训练图像分辨率
 resolution = 1024
 # 图像分箱参数
-min_bucket_reso = 256
+min_bucket_reso = 512
 max_bucket_reso = 2048
 bucket_reso_step = 64
 # 是否打乱tag
@@ -84,7 +84,7 @@ save_epochs_interval = 1
 
 # 学习率
 #默认推荐推荐1e-4和2e-4，可自行测试
-learning_rate = 2e-4
+learning_rate = 3e-4
 
 # 学习率调度器（控制学习率在训练过程中的变化）
 # 可选值：
