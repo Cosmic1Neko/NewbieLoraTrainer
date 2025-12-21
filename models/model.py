@@ -1412,8 +1412,9 @@ def NextDiT_3B_GQA_patch2_Adaln_Refiner_WHIT_CLIP(**kwargs):
         n_heads=24,
         n_kv_heads=8,
         axes_dims=[32, 32, 32],
-        axes_lens=[1024, 512, 512],
+        axes_lens=[1280, 512, 512],
         **kwargs
     )
+
 
 
