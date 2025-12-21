@@ -554,7 +554,6 @@ def save_lora_model(accelerator, model, config, step=None):
         unwrapped.save_pretrained(
             save_dir,
             is_main_process=accelerator.is_main_process,
-            state_dict=lora_state_dict, 
             safe_serialization=True,
         )
         logger.info(f"PEFT LoRA model saved to: {save_dir}")
@@ -1029,5 +1028,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
