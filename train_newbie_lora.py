@@ -558,7 +558,7 @@ def save_lora_model(accelerator, model, config, step=None):
             safe_serialization=True,
         )
         logger.info(f"PEFT LoRA model saved to: {save_dir}")
-
+        """
         # --- B. 保存 ComfyUI 兼容格式 ---
         comfy_state_dict = {}
         for key, value in lora_state_dict.items():
@@ -588,7 +588,7 @@ def save_lora_model(accelerator, model, config, step=None):
         # 保存 ComfyUI 专用文件
         save_file(comfy_state_dict, comfy_path)
         logger.info(f"ComfyUI compatible LoRA saved to: {comfy_path}")
-
+        """
 def load_checkpoint(accelerator, model, optimizer, scheduler, config):
     checkpoint_dir = os.path.join(config['Model']['output_dir'], "checkpoints")
     if not os.path.exists(checkpoint_dir):
@@ -1035,6 +1035,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
