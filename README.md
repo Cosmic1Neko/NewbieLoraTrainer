@@ -32,6 +32,12 @@ If you are already using Newbie inference models, this trainer will help you qui
 
 ---
 
+##  Note
+
+1. 启用rslora并使用comfyui进行推理时，必须使用正确的strength，计算公式 `strength = lora_alpha / sqrt(lora_rank)`
+
+---
+
 ## Environment & Setup
 
 The following steps assume a Python environment. It is recommended to use **Python 3.10+** and an NVIDIA GPU with CUDA support on Linux or Windows.
