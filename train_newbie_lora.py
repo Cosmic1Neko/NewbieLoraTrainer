@@ -558,24 +558,25 @@ def save_lora_model(accelerator, model, config, step=None):
             safe_serialization=True,
         )
         logger.info(f"PEFT LoRA model saved to: {save_dir}")
-        """
+
         # --- B. 保存 ComfyUI 兼容格式 ---
         comfy_state_dict = {}
         for key, value in lora_state_dict.items():
-            # 1. 替换前缀: base_model.model. -> diffusion_model.
-            new_key = key.replace("base_model.model.", "diffusion_model.")
-            
-            # 2. 转换 DoRA Key: lora_magnitude_vector -> dora_scale
-            if "lora_magnitude_vector" in new_key:
-                new_key = new_key.replace("lora_magnitude_vector", "dora_scale")
-
-            # 3. 重命名 lora_A/B 为 lora_down/up
-            if "lora_A.weight" in new_key:
-                new_key = new_key.replace("lora_A.weight", "lora_down.weight")
-            elif "lora_B.weight" in new_key:
-                new_key = new_key.replace("lora_B.weight", "lora_up.weight")
-            
-            comfy_state_dict[new_key] = value
+            # 1. 转换 DoRA Key: lora_magnitude_vector -> dora_scale
+            if key.endswith(".lora_magnitude_vector"):
+                key = key.replace(".lora_magnitude_vector", ".dora_scale")
+                ################## 重要: PEFT中保存的lora_magnitude_vector为一维向量，但ComfyUI期望是二维 ##################
+                if len(value.shape) == 1:
+                    value = value.unsqueeze(1)
+            # 2. 替换前缀: base_model.model. -> diffusion_model.
+            if key.startswith("base_model.model."):
+                key = "diffusion_model." + key[len("base_model.model."):]
+            # 3. 转换 LoRA 键名 (标准 ComfyUI 格式建议使用 lora_down/up)
+            if "lora_A.weight" in key:
+                key = key.replace("lora_A.weight", "lora_down.weight")
+            if "lora_B.weight" in key:
+                key = key.replace("lora_B.weight", "lora_up.weight")
+            comfy_state_dict[key] = value
         
         # 构造单文件文件名 (例如: MyLoRA_step_1000.safetensors)
         if step:
@@ -588,7 +589,7 @@ def save_lora_model(accelerator, model, config, step=None):
         # 保存 ComfyUI 专用文件
         save_file(comfy_state_dict, comfy_path)
         logger.info(f"ComfyUI compatible LoRA saved to: {comfy_path}")
-        """
+
 def load_checkpoint(accelerator, model, optimizer, scheduler, config):
     checkpoint_dir = os.path.join(config['Model']['output_dir'], "checkpoints")
     if not os.path.exists(checkpoint_dir):
@@ -1035,6 +1036,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
