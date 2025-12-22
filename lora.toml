@@ -134,6 +134,7 @@ use_dora = true
 # 修改LoRA缩放为lora_alpha / r -> lora_alpha / math.sqrt(r)
 # 本质是解耦了 学习率 与 lora_rank 间的关系
 # △W (LoRA)的标准差与sqrt(r)成正比，因此必须根据r进行缩放，类似Kaiming初始化
+# 启用时如果使用使用comfyui进行推理，必须使用正确的strength，计算公式 strength = lora_alpha / sqrt(lora_rank)
 use_rslora = true
 
 # =============================================================================
@@ -170,6 +171,7 @@ gradient_clip_norm = 1.0
 
 # FlashAttention-2 优化
 use_flash_attention_2 = true
+
 
 
 
