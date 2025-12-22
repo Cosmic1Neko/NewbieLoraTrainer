@@ -568,6 +568,12 @@ def save_lora_model(accelerator, model, config, step=None):
             # 2. 转换 DoRA Key: lora_magnitude_vector -> dora_scale
             if "lora_magnitude_vector" in new_key:
                 new_key = new_key.replace("lora_magnitude_vector", "dora_scale")
+
+            # 3. 重命名 lora_A/B 为 lora_down/up
+            if "lora_A.weight" in new_key:
+                new_key = new_key.replace("lora_A.weight", "lora_down.weight")
+            elif "lora_B.weight" in new_key:
+                new_key = new_key.replace("lora_B.weight", "lora_up.weight")
             
             comfy_state_dict[new_key] = value
         
@@ -1029,6 +1035,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
