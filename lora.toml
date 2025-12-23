@@ -84,7 +84,7 @@ save_epochs_interval = 1
 
 # 学习率
 #默认推荐推荐1e-4和2e-4，可自行测试
-learning_rate = 1e-4
+learning_rate = 2e-4
 
 # 学习率调度器（控制学习率在训练过程中的变化）
 # 可选值：
@@ -171,6 +171,7 @@ gradient_clip_norm = 1.0
 
 # FlashAttention-2 优化
 use_flash_attention_2 = true
+
 
 
 
