@@ -117,8 +117,8 @@ mixed_precision = "bf16"
 lora_rank = 96
 
 # LoRA alpha
-#推荐等于lora_rank
-lora_alpha = 96
+# 使用rslora时建议固定
+lora_alpha = 16
 
 # LoRA dropout
 # 推荐0.05-0.1或0
@@ -171,6 +171,7 @@ gradient_clip_norm = 1.0
 
 # FlashAttention-2 优化
 use_flash_attention_2 = true
+
 
 
 
