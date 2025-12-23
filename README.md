@@ -35,7 +35,8 @@ If you are already using Newbie inference models, this trainer will help you qui
 ##  Note
 
 1. 启用rslora并使用comfyui进行推理时，必须使用正确的strength，计算公式 `strength = lora_alpha / sqrt(lora_rank)`
-
+2. 强烈建议启用caption_dropout用以训练模型的无条件生成能力。可以有效避免高CFG时导致的"fried image"
+     * NewBie-v0.1在Negative Prompt为""时，会导致"fried image"，这可能为原因之一
 ---
 
 ## Environment & Setup
