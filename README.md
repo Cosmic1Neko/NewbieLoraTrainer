@@ -19,24 +19,22 @@ If you are already using Newbie inference models, this trainer will help you qui
 
 ##  Fork Features
 
-1. 使用[EQ-VAE](https://huggingface.co/Anzhc/MS-LC-EQ-D-VR_VAE)替换原来的Flux VAE，且修改VAE nn.conv2d的padding_mode为"reflect" (避免图像边缘问题) 。
-2. 实现原始Lumina Image 2.0的多分辨率函数（原分辨率loss -> 原分辨率loss + 4倍下采样loss），可能有助于图像全局结构的维持但增加了训练成本。
-3. 修复`do_shift`的潜在问题，保证时间步t能根据图像分辨率正确shift，而不是根据固定的`resolution`进行shift。
-4. 删除LYCORIS LoKr微调功能。取而代之的是，全面使用PEFT库进行LoRA微调，并添加开启`DoRA`的参数。
-5. 更改了use_cache的行为，默认只缓存图像latent而不缓存text embedding。
-6. 增加了dropout_caption_rate(无条件生成训练，有利于CFG)和shuffle_caption等有用的caption处理功能。
-7. 增加了gradient_accumulation功能，使得更大批次的训练成为可能。
-8. 使用wandb替换tensorboard进行损失等日志记录。
-9. 修改图像分箱策略，实现更精细的分箱，减少裁剪损失（依照sd-scripts）。
-10. 修复了对latent的错误变换策略。`latents = latents * scaling_factor` -> `latents = (latents - shift_factor) * scaling_factor`
-
+1. **VAE Enhancement**: Replaced the original Flux VAE with EQ-VAE and modified the padding_mode of nn.conv2d to "reflect" to mitigate edge artifacts in generated images.
+2. **Multi-Resolution Loss**: Implemented the multi-resolution objective from Lumina Image 2.0 (Original Loss + 4x Downsampled Loss). This helps maintain global image structure during training, though it increases computational overhead.
+3. **Dynamic Time-Step Shifting**: Fixed potential issues with `do_shift`, ensuring that the time-step $t$ is correctly shifted based on the actual image resolution rather than a fixed global resolution.
+4. **LoRA-Focused Training**: Removed LYCORIS LoKr support in favor of a full migration to the PEFT library for LoRA fine-tuning. Added parameters to enable DoRA (Weight-Decomposed Low-Rank Adaptation).
+5. **Optimized Caching Strategy**: Modified the use_cache behavior to default to caching image latents only, excluding text embeddings to maintain flexibility.
+6. **Advanced Caption Processing**: Added useful caption features including dropout_caption_rate (for unconditional generation training to improve Classifier-Free Guidance) and shuffle_caption.
+7. **Gradient Accumulation**: Integrated gradient accumulation functionality to enable training with effectively larger batch sizes on consumer hardware.
+8. **Improved Logging**: Replaced TensorBoard with Weights & Biases (wandb) for more comprehensive experiment tracking and loss visualization.
+9. **Refined Resolution Bucketing**: Implemented a more granular bucketing strategy based on sd-scripts to minimize cropping loss and support diverse aspect ratios.
+10. **Latent Transformation Fix**: Corrected the latent scaling logic from `latents = latents * scaling_factor` to `latents = (latents - shift_factor) * scaling_factor`.
 ---
 
-##  Note
+## Important Notes
+* Inference with rsLoRA: If you enable use_rslora during training and use ComfyUI for inference, you must apply the correct strength adjustment. The formula is: strength = lora_alpha / sqrt(lora_rank).
 
-1. 启用rslora并使用comfyui进行推理时，必须使用正确的strength，计算公式 `strength = lora_alpha / sqrt(lora_rank)`
-2. 强烈建议启用dropout_caption_rate用以训练模型的无条件生成能力，可以有效避免高CFG时导致的"fried image"。
-     * NewBie-v0.1在Negative Prompt为""时，会导致"fried image"，这可能为原因之一
+* CFG and Image Quality: It is strongly recommended to enable dropout_caption_rate. This trains the model's unconditional generation capability, which effectively prevents "fried images" (over-saturation/artifacting) when using high CFG scales. This might be one of the reasons why NewBie-v0.1 produces "fried images" when the Negative Prompt is empty.
 ---
 
 ## Environment & Setup
