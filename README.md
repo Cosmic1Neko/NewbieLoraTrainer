@@ -32,9 +32,9 @@ If you are already using Newbie inference models, this trainer will help you qui
 ---
 
 ## Important Notes
-* Inference with rsLoRA: If you enable use_rslora during training and use ComfyUI for inference, you must apply the correct strength adjustment. The formula is: strength = lora_alpha / sqrt(lora_rank).
+* Inference with rsLoRA: If you enable use_rslora during training and use ComfyUI for inference, you must apply the correct strength adjustment. The formula is: `strength = lora_alpha / sqrt(lora_rank)`.
 
-* CFG and Image Quality: It is strongly recommended to enable dropout_caption_rate. This trains the model's unconditional generation capability, which effectively prevents "fried images" (over-saturation/artifacting) when using high CFG scales. This might be one of the reasons why NewBie-v0.1 produces "fried images" when the Negative Prompt is empty.
+* CFG and Image Quality: It is strongly recommended to enable `dropout_caption_rate`. This trains the model's unconditional generation capability, which effectively prevents "fried images" (over-saturation/artifacting) when using high CFG scales. This might be one of the reasons why NewBie-v0.1 produces "fried images" when the Negative Prompt is empty.
 ---
 
 ## Environment & Setup
