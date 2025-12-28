@@ -19,7 +19,7 @@ If you are already using Newbie inference models, this trainer will help you qui
 
 ##  Fork Features
 
-1. **VAE Enhancement**: Replaced the original Flux VAE with EQ-VAE and modified the padding_mode of nn.conv2d to "reflect" to mitigate edge artifacts in generated images.
+1. **VAE Enhancement**: Replaced the original Flux.1 VAE with EQ-VAE and modified the `padding_mode` of `nn.conv2d` to "reflect" to mitigate edge artifacts in generated images.
 2. **Multi-Resolution Loss**: Implemented the multi-resolution objective from Lumina Image 2.0 (Original Loss + 4x Downsampled Loss). This helps maintain global image structure during training, though it increases computational overhead.
 3. **Dynamic Time-Step Shifting**: Fixed potential issues with `do_shift`, ensuring that the time-step $t$ is correctly shifted based on the actual image resolution rather than a fixed global resolution.
 4. **LoRA-Focused Training**: Removed LYCORIS LoKr support in favor of a full migration to the PEFT library for LoRA fine-tuning. Added parameters to enable DoRA (Weight-Decomposed Low-Rank Adaptation).
