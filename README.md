@@ -23,11 +23,11 @@ If you are already using Newbie inference models, this trainer will help you qui
 2. **Multi-Resolution Loss**: Implemented the multi-resolution objective from Lumina Image 2.0 (Original Loss + 4x Downsampled Loss). This helps maintain global image structure during training, though it increases computational overhead.
 3. **Dynamic Time-Step Shifting**: Fixed potential issues with `do_shift`, ensuring that the time-step $t$ is correctly shifted based on the actual image resolution rather than a fixed global resolution.
 4. **LoRA-Focused Training**: Removed LYCORIS LoKr support in favor of a full migration to the PEFT library for LoRA fine-tuning. Added parameters to enable DoRA (Weight-Decomposed Low-Rank Adaptation).
-5. **Optimized Caching Strategy**: Modified the use_cache behavior to default to caching image latents only, excluding text embeddings to maintain flexibility.
-6. **Advanced Caption Processing**: Added useful caption features including dropout_caption_rate (for unconditional generation training to improve Classifier-Free Guidance) and shuffle_caption.
+5. **Optimized Caching Strategy**: Modified the `use_cache` behavior to default to caching image latents only, excluding text embeddings to maintain flexibility.
+6. **Advanced Caption Processing**: Added useful caption features including `dropout_caption_rate` (for unconditional generation training to improve Classifier-Free Guidance) and `shuffle_caption`.
 7. **Gradient Accumulation**: Integrated gradient accumulation functionality to enable training with effectively larger batch sizes on consumer hardware.
 8. **Improved Logging**: Replaced TensorBoard with Weights & Biases (wandb) for more comprehensive experiment tracking and loss visualization.
-9. **Refined Resolution Bucketing**: Implemented a more granular bucketing strategy based on sd-scripts to minimize cropping loss and support diverse aspect ratios.
+9. **Refined Resolution Bucketing**: Implemented a more granular bucketing strategy based on `sd-scripts` to minimize cropping loss and support diverse aspect ratios.
 10. **Latent Transformation Fix**: Corrected the latent scaling logic from `latents = latents * scaling_factor` to `latents = (latents - shift_factor) * scaling_factor`.
 ---
 
