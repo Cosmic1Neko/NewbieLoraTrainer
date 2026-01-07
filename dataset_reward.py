@@ -80,8 +80,8 @@ class ImageScorer:
 
         for person in predictions:  
             # 获取 BBox
-            bbox = person.get('bbox', [[0, 0, 0, 0]])
-            area = (bbox[2] - bbox[0]) * (bbox[3] - bbox[1])
+            bbox = person.get('bbox', [0, 0, 0, 0])
+            area = (bbox[0][2] - bbox[0][0]) * (bbox[0][3] - bbox[0][1])
             weight = max(area, 1e-5)
 
             kp_scores = np.array(person['keypoint_scores']).squeeze()
