@@ -38,6 +38,7 @@ def parse_args():
     parser.add_argument("--num_samples", type=int, default=3, help="每个 Prompt 生成的样本数量 (N)")
     parser.add_argument("--steps", type=int, default=28, help="生成步数")
     parser.add_argument("--cfg_scale", type=float, default=6, help="Classifier-Free Guidance 强度")
+    parser.add_argument("--apply_shift", action="store_true", help="是否根据图像分辨率动态调整时间步 shift")
     parser.add_argument("--device", type=str, default="cuda", help="使用设备")
     return parser.parse_args()
 
@@ -126,10 +127,13 @@ def main():
         # 获取该图片在分箱策略下的目标分辨率
         target_width, target_height = dataset.image_to_bucket[i]
 
-        # 计算当前分辨率下的 Time Shift 参数
-        current_seq_len = (target_height // 16) * (target_width // 16)
-        mu = get_lin_function()(current_seq_len) 
-        shift_val = math.exp(mu)
+        if args.apply_shift:
+            # 根据分辨率计算序列长度 (Patch size 为 16)
+            current_seq_len = (target_height // 16) * (target_width // 16)
+            mu = get_lin_function()(current_seq_len) 
+            shift_val = math.exp(mu)
+        else:
+            shift_val = 1.0
         
         # 处理 Wildcard: 获取所有可能的 caption 变体
         captions_to_process = [raw_caption]
