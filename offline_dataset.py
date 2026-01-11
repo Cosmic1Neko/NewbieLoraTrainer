@@ -4,7 +4,9 @@ python offline_dataset.py \
   --lora_path /root/autodl-tmp/output/NewBieLoRA \
   --output_dir /root/autodl-tmp/gen_dataset \
   --num_samples 2 \
-  --steps 28
+  --steps 20 \
+  --max_data_samples 20000 \
+  --seed 114514
 """
 
 import os
@@ -13,6 +15,7 @@ import toml
 import torch
 import argparse
 import math
+import random
 from pathlib import Path
 from tqdm import tqdm
 from PIL import Image
@@ -40,11 +43,20 @@ def parse_args():
     parser.add_argument("--steps", type=int, default=28, help="生成步数")
     parser.add_argument("--cfg_scale", type=float, default=6, help="Classifier-Free Guidance 强度")
     parser.add_argument("--device", type=str, default="cuda", help="使用设备")
+    parser.add_argument("--max_data_samples", type=int, default=-1, help="从数据集中随机抽取的样本数量，-1 为使用全部数据")
+    parser.add_argument("--seed", type=int, default=42, help="随机抽样种子")
     return parser.parse_args()
 
 @torch.inference_mode()
 def main():
     args = parse_args()
+
+    if args.seed is not None:
+        random.seed(args.seed)
+        np.random.seed(args.seed)
+        torch.manual_seed(args.seed)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed_all(args.seed)
     
     # 1. 加载配置
     with open(args.config_file, 'r', encoding='utf-8') as f:
@@ -96,6 +108,15 @@ def main():
         enable_wildcard=False, # 此处先关闭，我们在循环中手动处理 split
     )
 
+    # 确定要处理的样本索引列表
+    all_indices = list(range(len(dataset)))
+    if args.max_data_samples > 0 and args.max_data_samples < len(dataset):
+        print(f"正在从总数 {len(dataset)} 中随机抽取 {args.max_data_samples} 个样本 (Seed: {args.seed})...")
+        target_indices = random.sample(all_indices, args.max_data_samples)
+    else:
+        print(f"使用全部 {len(dataset)} 个样本进行生成...")
+        target_indices = all_indices
+
     # 4. 预计算无条件特征 (用于 CFG)
     print("预计算负向 (Unconditional) 特征...")
     # Gemma 无条件
@@ -121,11 +142,11 @@ def main():
     scaling_factor = getattr(vae.config, 'scaling_factor', 0.3611)
     shift_factor = getattr(vae.config, 'shift_factor', 0.1159)
  
-    print(f"开始为 {len(dataset)} 个原始样本生成偏好对池...")
+    print(f"开始为 {len(target_indices)} 个原始样本生成偏好对池...")
 
-    batch_size = args.num_samples
+    batch_size = args.num_samples # args.num_samples
     
-    for i in tqdm(range(len(dataset))):
+    for i in tqdm(target_indices):
         img_path = dataset.image_paths[i]
         raw_caption = dataset.captions[i]
         target_width, target_height = dataset.image_to_bucket[i]
