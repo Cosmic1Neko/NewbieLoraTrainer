@@ -123,7 +123,7 @@ def main():
  
     print(f"开始为 {len(dataset)} 个原始样本生成偏好对池...")
 
-    batch_size = 2 # args.num_samples
+    batch_size = args.num_samples
     
     for i in tqdm(range(len(dataset))):
         img_path = dataset.image_paths[i]
