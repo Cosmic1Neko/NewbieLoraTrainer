@@ -547,18 +547,15 @@ class DPODataset(Dataset):
     def __init__(
         self,
         preference_json_path,
-        resolution=512,
         caption_dropout_rate=0.1,
         real_ratio=0.2,
     ):
         """
         Args:
             preference_json_path: 人工精炼后的偏好对 JSON 路径，包含真实/生成图片，以及偏好选择
-            resolution: 图片分辨率
             caption_dropout_rate:由于DPO需要保持CFG能力，需要保留caption dropout
             real_ratio: 混合真实样本的比例
         """
-        self.resolution = resolution
         self.caption_dropout_rate = caption_dropout_rate
         self.real_ratio = real_ratio
 
@@ -566,9 +563,11 @@ class DPODataset(Dataset):
         # 预期格式示例: 
         # [
         #   {
-        #     "real": "path/to/real.jpg",
-        #     "generated": ["path/to/gen1.jpg", "path/to/gen2.jpg"], 
         #     "caption": "a cute cat"
+        #     "real_image_path": "path/to/real.jpg",
+        #     "generated_image_path": ["path/to/gen1.jpg", "path/to/gen2.jpg"], 
+        #     "resultion": [1024, 1024]
+        #     "meta": {...},
         #     "dpo_pair": {
         #        "chosen": 'path1',
         #        "rejected": 'path2',
@@ -594,16 +593,9 @@ class DPODataset(Dataset):
         ]
         # 筛选出可用于正则化的数据
         self.real_reg_data = [
-            item for item in self.all_data
-            if item.get("real") and item.get("generated")
+            item for item in self.preference_data
+            if item.get("real_image_path") and item.get("generated_image_path")
         ]
-
-        self.transform = transforms.Compose([
-            transforms.Resize(resolution, interpolation=transforms.InterpolationMode.LANCZOS),
-            transforms.CenterCrop(resolution), 
-            transforms.ToTensor(),
-            transforms.Normalize([0.5], [0.5]),
-        ])
         
         print(f"Dataset loaded from {preference_json_path}")
         print(f"  - Total Loaded: {len(raw_data)}")
@@ -618,14 +610,36 @@ class DPODataset(Dataset):
         # 长度定义为偏好数据集的长度，混合逻辑在 __getitem__ 动态处理
         return len(self.preference_data)
 
-    def load_image(self, path):
+    def load_image(self, path, target_height, target_width):
         try:
             image = Image.open(path).convert("RGB")
-            return self.transform(image)
-        except Exception as e:
-            print(f"Error loading image {path}: {e}")
-            # 返回全黑图作为 fallback，防止训练崩溃
-            return torch.zeros((3, self.resolution, self.resolution))
+            orig_w, orig_h = image.size
+            
+            # 计算比例
+            bucket_ratio = target_width / target_height
+            orig_ratio = orig_w / orig_h
+            
+            if orig_ratio > bucket_ratio:
+                # 原图更宽，以高度为基准缩放
+                resize_height = target_height
+                resize_width = int(resize_height * orig_ratio)
+            else:
+                # 原图更窄，以宽度为基准缩放
+                resize_width = target_width
+                resize_height = int(resize_width / orig_ratio)
+                
+            transform = transforms.Compose([
+                transforms.Resize((resize_height, resize_width), interpolation=InterpolationMode.LANCZOS),
+                transforms.CenterCrop((target_height, target_width)),
+                transforms.ToTensor(),
+                transforms.Normalize([0.5], [0.5])
+            ])
+            
+            return transform(image)
+        
+    except Exception as e:
+        print(f"Error loading image {path}: {e}")
+        return torch.zeros((3, self.resolution, self.resolution))
 
     def _get_real_pair(self):
         """从真实vs生成数据集中采样，处理生成图片列表"""
@@ -633,13 +647,14 @@ class DPODataset(Dataset):
             return None, None, ""
         
         item = random.choice(self.real_reg_data)
+        target_width, target_height = item.get("resultion")[0], item.get("resultion")[1]
         
         # 1. 获取 Chosen (Real)
-        chosen_path = item.get("real")
+        chosen_path = item.get("real_image_path")
         
         # 2. 获取 Rejected (Generated)
         # offline_dataset.py 可能会生成 num_samples > 1，所以 generated 可能是列表
-        gen_candidates = item.get("generated")
+        gen_candidates = item.get("generated_image_path")
         
         rejected_path = None
         if isinstance(gen_candidates, list):
@@ -649,11 +664,12 @@ class DPODataset(Dataset):
             rejected_path = gen_candidates
             
         caption = item.get("caption", "")
-        return chosen_path, rejected_path, caption
+        return chosen_path, rejected_path, caption, target_width, target_height
 
     def _get_preference_pair(self, idx):
         """从偏好数据集中获取 (DPO Target)"""
         item = self.preference_data[idx]
+        target_width, target_height = item.get("resultion")[0], item.get("resultion")[1]
         
         # 直接读取 dpo_pair 结构
         dpo_pair = item.get("dpo_pair", {})
@@ -661,7 +677,7 @@ class DPODataset(Dataset):
         rejected_path = dpo_pair.get("rejected")
         caption = item.get("caption", "")
         
-        return chosen_path, rejected_path, caption
+        return chosen_path, rejected_path, caption, target_width, target_height
 
     def __getitem__(self, idx):
         # 策略：按比例混合真实数据与偏好数据
@@ -673,13 +689,13 @@ class DPODataset(Dataset):
         )
 
         if use_real_regularization:
-            chosen_path, rejected_path, caption = self._get_real_pair()
+            chosen_path, rejected_path, caption, target_width, target_height = self._get_real_pair()
         else:
-            chosen_path, rejected_path, caption = self._get_preference_pair(idx)
+            chosen_path, rejected_path, caption, target_width, target_height = self._get_preference_pair(idx)
 
         # 加载图片
-        chosen_img = self.load_image(chosen_path)
-        rejected_img = self.load_image(rejected_path)
+        chosen_img = self.load_image(chosen_path, target_width, target_height)
+        rejected_img = self.load_image(rejected_path, target_width, target_height)
 
         # Caption Dropout (维持 CFG 能力)
         if random.random() < self.caption_dropout_rate:
