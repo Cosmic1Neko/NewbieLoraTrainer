@@ -542,3 +542,162 @@ def collate_fn(batch):
             "captions": [example["caption"] for example in batch],
             "cached": False,
         }
+
+class DPODataset(Dataset):
+    def __init__(
+        self,
+        preference_json_path,
+        resolution=512,
+        caption_dropout_rate=0.1,
+        real_ratio=0.2,
+    ):
+        """
+        Args:
+            preference_json_path: 人工精炼后的偏好对 JSON 路径，包含真实/生成图片，以及偏好选择
+            resolution: 图片分辨率
+            caption_dropout_rate:由于DPO需要保持CFG能力，需要保留caption dropout
+            real_ratio: 混合真实样本的比例
+        """
+        self.resolution = resolution
+        self.caption_dropout_rate = caption_dropout_rate
+        self.real_ratio = real_ratio
+
+        # 加载偏好对数据
+        # 预期格式示例: 
+        # [
+        #   {
+        #     "real": "path/to/real.jpg",
+        #     "generated": ["path/to/gen1.jpg", "path/to/gen2.jpg"], 
+        #     "caption": "a cute cat"
+        #     "dpo_pair": {
+        #        "chosen": 'path1',
+        #        "rejected": 'path2',
+        #        "margin": 1.0
+        #     }，
+        #     "annotation_status": 'confirm'
+        #   },
+        #   ...
+        # ]
+        # 加载单一的 JSON 数据集
+        with open(preference_json_path, 'r', encoding='utf-8') as f:
+            raw_data = json.load(f)
+        # 过滤掉被标记为 rejected 的数据
+        self.all_data = [
+            item for item in raw_data
+            if item.get("annotation_status") != "rejected"
+        ]
+        # 筛选出有效的偏好对数据
+        # 必须包含 dpo_pair 且其中有 chosen 和 rejected 路径
+        self.preference_data = [
+            item for item in self.all_data 
+            if item.get("dpo_pair") and item.get("dpo_pair", {}).get("chosen") and item.get("dpo_pair", {}).get("rejected")
+        ]
+        # 筛选出可用于正则化的数据
+        self.real_reg_data = [
+            item for item in self.all_data
+            if item.get("real") and item.get("generated")
+        ]
+
+        self.transform = transforms.Compose([
+            transforms.Resize(resolution, interpolation=transforms.InterpolationMode.LANCZOS),
+            transforms.CenterCrop(resolution), 
+            transforms.ToTensor(),
+            transforms.Normalize([0.5], [0.5]),
+        ])
+        
+        print(f"Dataset loaded from {preference_json_path}")
+        print(f"  - Total Loaded: {len(raw_data)}")
+        print(f"  - After Filtering 'rejected': {len(self.all_data)}")
+        print(f"  - Valid Preference Pairs (DPO): {len(self.preference_data)}")
+        print(f"  - Valid Real Regularization Pairs: {len(self.real_reg_data)}")
+        
+        if len(self.preference_data) == 0:
+            print("Warning: No valid preference pairs found (checked 'dpo_pair' field). DPO training might fail.")
+
+    def __len__(self):
+        # 长度定义为偏好数据集的长度，混合逻辑在 __getitem__ 动态处理
+        return len(self.preference_data)
+
+    def load_image(self, path):
+        try:
+            image = Image.open(path).convert("RGB")
+            return self.transform(image)
+        except Exception as e:
+            print(f"Error loading image {path}: {e}")
+            # 返回全黑图作为 fallback，防止训练崩溃
+            return torch.zeros((3, self.resolution, self.resolution))
+
+    def _get_real_pair(self):
+        """从真实vs生成数据集中采样，处理生成图片列表"""
+        if not self.real_reg_data:
+            return None, None, ""
+        
+        item = random.choice(self.real_reg_data)
+        
+        # 1. 获取 Chosen (Real)
+        chosen_path = item.get("real")
+        
+        # 2. 获取 Rejected (Generated)
+        # offline_dataset.py 可能会生成 num_samples > 1，所以 generated 可能是列表
+        gen_candidates = item.get("generated")
+        
+        rejected_path = None
+        if isinstance(gen_candidates, list):
+            if len(gen_candidates) > 0:
+                rejected_path = random.choice(gen_candidates)
+        elif isinstance(gen_candidates, str):
+            rejected_path = gen_candidates
+            
+        caption = item.get("caption", "")
+        return chosen_path, rejected_path, caption
+
+    def _get_preference_pair(self, idx):
+        """从偏好数据集中获取 (DPO Target)"""
+        item = self.preference_data[idx]
+        
+        # 直接读取 dpo_pair 结构
+        dpo_pair = item.get("dpo_pair", {})
+        chosen_path = dpo_pair.get("chosen")
+        rejected_path = dpo_pair.get("rejected")
+        caption = item.get("caption", "")
+        
+        return chosen_path, rejected_path, caption
+
+    def __getitem__(self, idx):
+        # 策略：按比例混合真实数据与偏好数据
+        # 如果 real_ratio > 0，则有概率采样 Real vs Gen 数据作为正则项
+        use_real_regularization = (
+            self.real_ratio > 0 
+            and len(self.real_reg_data) > 0 
+            and random.random() < self.real_ratio
+        )
+
+        if use_real_regularization:
+            chosen_path, rejected_path, caption = self._get_real_pair()
+        else:
+            chosen_path, rejected_path, caption = self._get_preference_pair(idx)
+
+        # 加载图片
+        chosen_img = self.load_image(chosen_path)
+        rejected_img = self.load_image(rejected_path)
+
+        # Caption Dropout (维持 CFG 能力)
+        if random.random() < self.caption_dropout_prob:
+            caption = ""
+
+        return {
+            "pixel_values_chosen": chosen_img,
+            "pixel_values_rejected": rejected_img,
+            "caption": caption
+        }
+
+def collate_fn(batch):
+    pixel_values_chosen = torch.stack([item["pixel_values_chosen"] for item in batch])
+    pixel_values_rejected = torch.stack([item["pixel_values_rejected"] for item in batch])
+    captions = [item["caption"] for item in batch]
+    
+    return {
+        "pixel_values_chosen": pixel_values_chosen,
+        "pixel_values_rejected": pixel_values_rejected,
+        "captions": captions
+    }
