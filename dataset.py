@@ -690,14 +690,3 @@ class DPODataset(Dataset):
             "pixel_values_rejected": rejected_img,
             "caption": caption
         }
-
-def collate_fn(batch):
-    pixel_values_chosen = torch.stack([item["pixel_values_chosen"] for item in batch])
-    pixel_values_rejected = torch.stack([item["pixel_values_rejected"] for item in batch])
-    captions = [item["caption"] for item in batch]
-    
-    return {
-        "pixel_values_chosen": pixel_values_chosen,
-        "pixel_values_rejected": pixel_values_rejected,
-        "captions": captions
-    }
