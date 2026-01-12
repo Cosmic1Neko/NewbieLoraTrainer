@@ -682,7 +682,7 @@ class DPODataset(Dataset):
         rejected_img = self.load_image(rejected_path)
 
         # Caption Dropout (维持 CFG 能力)
-        if random.random() < self.caption_dropout_prob:
+        if random.random() < self.caption_dropout_rate:
             caption = ""
 
         return {
