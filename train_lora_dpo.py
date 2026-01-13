@@ -7,6 +7,8 @@ import os
 import random
 from pathlib import Path
 from typing import Dict, List, Optional
+import toml
+from datetime import datetime
 
 import torch
 import torch.nn.functional as F
@@ -26,8 +28,8 @@ from safetensors.torch import load_file, save_file
 
 from models.model import NewbieModel
 from models.components import NewbieConfig
-from dataset import SDPODataset
-from train_newbie_lora import load_model_and_tokenizer, setup_scheduler, setup_optimizer, save_checkpoint
+from dataset import DPODataset
+from train_newbie_lora import load_model_and_tokenizer, setup_scheduler, setup_optimizer, save_checkpoint, save_lora_model
 from transport import create_transport
 try:
     import bitsandbytes as bnb
@@ -188,7 +190,7 @@ def main():
         torch.backends.cuda.sdp_kernel(enable_flash=False, enable_math=True, enable_mem_efficient=False)
 
     if accelerator.is_main_process:
-        os.makedirs(args.output_dir, exist_ok=True)
+        os.makedirs(config['Model']['output_dir'], exist_ok=True)
     ####################################################################################################
     # 加载模型
     model, vae, text_encoder, tokenizer, clip_model, clip_tokenizer = load_model_and_tokenizer(config)
@@ -223,7 +225,7 @@ def main():
 
     train_dataloader = DataLoader(
         train_dataset,
-        batch_size=batch_size
+        batch_size=batch_size,
         shuffle=True,
         collate_fn=collate_fn,
         num_workers=config['Model'].get('dataloader_num_workers', 4)
@@ -314,7 +316,7 @@ def main():
             with accelerator.accumulate(model):
                 loss = compute_loss(
                     model, 
-                    ref_model
+                    ref_model,
                     vae, 
                     text_encoder, 
                     tokenizer, 
@@ -323,7 +325,7 @@ def main():
                     transport, 
                     batch, 
                     accelerator.device, 
-                    gemma3_prompt,
+                    config['Model'].get('gemma3_prompt', ''),
                     beta=config['Model']['beta']
                 )
                 epoch_losses.append(loss.item())
@@ -362,7 +364,7 @@ def main():
                 if global_step % 1000 == 0:
                     save_checkpoint(accelerator, model, optimizer, scheduler, global_step, config)
                     if ema_model:
-                        torch.save(ema_model.state_dict(), os.path.join(save_path, "ema_weights.pt"))
+                        torch.save(ema_model.state_dict(), os.path.join(config['Model']['output_dir'], "ema_weights.pt"))
 
         avg_epoch_loss = sum(epoch_losses) / len(epoch_losses) if epoch_losses else 0.0
         logger.info(f"Epoch {epoch+1}/{config['Model']['num_epochs']} completed - Average Loss: {avg_epoch_loss:.4f}")
@@ -370,7 +372,7 @@ def main():
         if save_epochs_interval == 0 or (epoch + 1) % save_epochs_interval == 0:
             save_checkpoint(accelerator, model, optimizer, scheduler, global_step, config)
             if ema_model:
-                torch.save(ema_model.state_dict(), os.path.join(save_path, "ema_weights.pt"))
+                torch.save(ema_model.state_dict(), os.path.join(config['Model']['output_dir'], "ema_weights.pt"))
             logger.info(f"Checkpoint saved at epoch {epoch+1}")
 
     logger.info("Training complete, saving final model")
