@@ -242,7 +242,7 @@ class Transport:
 
         return score_fn
     
-    def training_dpo_losses(self, model, ref_model, x1_chosen, x1_rejected, beta=1000.0, model_kwargs=None):
+    def training_dpo_losses(self, model, ref_model, x1_chosen, x1_rejected, beta=1000.0, mu=0.0, dmpo_alpha=0.0, model_kwargs=None):
         """
         为纠正流模型实现的 DPO 损失函数。
         
@@ -251,14 +251,15 @@ class Transport:
             ref_model: 冻结的参考模型（Reference Model）。
             x1_chosen: 用户偏好的图像 Batch [B, C, H, W]。
             x1_rejected: 用户不偏好的图像 Batch [B, C, H, W]。
-            beta: DPO 的正则化系数，SDXL 训练通常取 1000-5000 [cite: 163]。
+            beta: DPO 的正则化系数，SDXL 训练通常取 1000-5000。
+            mu: SDPO 的胜者保护系数 (winner_preserving_mu)，控制 safeguard 的强度。
+            dmpo_alpha: DMPO 的目标分布系数，用于构建 KL 散度目标。
             model_kwargs: 模型的额外参数（如 prompt conditioning）。
         """
         if model_kwargs is None:
             model_kwargs = {}
 
         # 1. 采样共享的时间步 t 和初始噪声 x0
-        # 使用 self.sample 确保采样逻辑与原父类一致
         t, x0, _ = self.sample(x1_chosen)
 
         # 2. 路径规划：为 chosen 和 rejected 图片生成相同的 xt (插值点) 和 ut (目标速度) 
@@ -285,23 +286,63 @@ class Transport:
         ref_w_err = mean_flat((ref_w_pred - ut_w) ** 2)
         ref_l_err = mean_flat((ref_l_pred - ut_l) ** 2)
 
-        # 5. 计算 DPO 核心项
+        # 5. SDPO
+        # 核心原理：通过缩放败者分支的梯度贡献，确保更新不会导致胜者损失在一阶近似下增加。
+        if mu > 0:
+            # 计算输出空间梯度近似
+            gA = (model_w_pred - ut_w).detach() # 胜者梯度方向
+            gB = (model_l_pred - ut_l).detach() # 败者梯度方向
+            
+            num = (gA.flatten() ** 2).sum()                       # ||gA||^2
+            den = (gB.flatten() * gA.flatten()).sum()             # gB · gA (点积)
+            
+            # 当 den > 0 (梯度方向同向) 时计算缩放因子 λ，否则不限制 (设为 1.0)
+            lam = torch.where(
+                den > 0,
+                ((1.0 - float(mu)) * num) / (den + 1e-9),
+                torch.tensor(1.0, device=model_w_pred.device, dtype=model_w_pred.dtype)
+            )
+            # 限制 λ 在 [0, 1.0] 范围内以保证稳定性
+            lam = lam.clamp(min=0.0, max=1.0).detach()
+            
+            # 使用 λ 缩放败者分支的损失贡献
+            model_l_err_final = model_l_err.detach() + lam * (model_l_err - model_l_err.detach())
+        else:
+            model_l_err_final = model_l_err
+        
+        # 6. 计算 Logits (inside_term)
+        # 遵循论文中的缩放比例 -0.5 * beta
         w_diff = model_w_err - ref_w_err
-        l_diff = model_l_err - ref_l_err
+        l_diff = model_l_err_final - ref_l_err
+        inside_term = -0.5 * beta * (w_diff - l_diff)
         
-        inside_term = -1 * beta * (w_diff - l_diff)
-        
-        # 计算最终损失
-        loss = -torch.nn.functional.logsigmoid(inside_term).mean()
+        # 7. 计算最终 Loss (DMPO + SDPO)
+        if dmpo_alpha > 0:
+            # DMPO: 将偏好优化转化为 KL 散度最小化任务
+            p = torch.sigmoid(inside_term)
+            q_val = 1.0 - dmpo_alpha
+            eps = 1e-6
+            q_val = max(eps, min(1.0 - eps, q_val)) # 目标分布 q 边界保护
+            
+            # 采用数值稳定的 softplus 计算 log 概率
+            log_p = -torch.nn.functional.softplus(-inside_term)
+            log_1mp = -torch.nn.functional.softplus(inside_term)
+            
+            # KL(p||q) = p*log(p/q) + (1-p)*log((1-p)/(1-q))
+            loss = p * (log_p - math.log(q_val)) + (1 - p) * (log_1mp - math.log(1 - q_val))
+            loss = loss.mean()
+        else:
+            # 默认为标准 DPO Logsimgoid 损失
+            loss = -torch.nn.functional.logsigmoid(inside_term).mean()
 
         terms = {
             "loss": loss,
             "model_w_mse": model_w_err.detach().mean(),
             "model_l_mse": model_l_err.detach().mean(),
+            "inside_term": inside_term.detach().mean(),
             "t": t
         }
         return terms
-
 
 class Sampler:
     """Sampler class for the transport model"""
