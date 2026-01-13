@@ -12,6 +12,7 @@ from PIL import Image
 import numpy as np
 from tqdm import tqdm
 from safetensors.torch import load_file, save_file
+import json
 
 # 设置 logger
 logger = logging.getLogger(__name__)
@@ -611,35 +612,30 @@ class DPODataset(Dataset):
         return len(self.preference_data)
 
     def load_image(self, path, target_height, target_width):
-        try:
-            image = Image.open(path).convert("RGB")
-            orig_w, orig_h = image.size
+        image = Image.open(path).convert("RGB")
+        orig_w, orig_h = image.size
             
-            # 计算比例
-            bucket_ratio = target_width / target_height
-            orig_ratio = orig_w / orig_h
+        # 计算比例
+        bucket_ratio = target_width / target_height
+        orig_ratio = orig_w / orig_h
             
-            if orig_ratio > bucket_ratio:
-                # 原图更宽，以高度为基准缩放
-                resize_height = target_height
-                resize_width = int(resize_height * orig_ratio)
-            else:
-                # 原图更窄，以宽度为基准缩放
-                resize_width = target_width
-                resize_height = int(resize_width / orig_ratio)
+        if orig_ratio > bucket_ratio:
+            # 原图更宽，以高度为基准缩放
+            resize_height = target_height
+            resize_width = int(resize_height * orig_ratio)
+        else:
+            # 原图更窄，以宽度为基准缩放
+            resize_width = target_width
+            resize_height = int(resize_width / orig_ratio)
                 
-            transform = transforms.Compose([
-                transforms.Resize((resize_height, resize_width), interpolation=InterpolationMode.LANCZOS),
-                transforms.CenterCrop((target_height, target_width)),
-                transforms.ToTensor(),
-                transforms.Normalize([0.5], [0.5])
-            ])
+        transform = transforms.Compose([
+            transforms.Resize((resize_height, resize_width), interpolation=InterpolationMode.LANCZOS),
+            transforms.CenterCrop((target_height, target_width)),
+            transforms.ToTensor(),
+            transforms.Normalize([0.5], [0.5])
+        ])
             
-            return transform(image)
-        
-    except Exception as e:
-        print(f"Error loading image {path}: {e}")
-        return torch.zeros((3, self.resolution, self.resolution))
+        return transform(image)
 
     def _get_real_pair(self):
         """从真实vs生成数据集中采样，处理生成图片列表"""
@@ -647,7 +643,7 @@ class DPODataset(Dataset):
             return None, None, ""
         
         item = random.choice(self.real_reg_data)
-        target_width, target_height = item.get("resultion")[0], item.get("resultion")[1]
+        target_width, target_height = item.get("resolution")[0], item.get("resolution")[1]
         
         # 1. 获取 Chosen (Real)
         chosen_path = item.get("real_image_path")
@@ -669,7 +665,7 @@ class DPODataset(Dataset):
     def _get_preference_pair(self, idx):
         """从偏好数据集中获取 (DPO Target)"""
         item = self.preference_data[idx]
-        target_width, target_height = item.get("resultion")[0], item.get("resultion")[1]
+        target_width, target_height = item.get("resolution")[0], item.get("resolution")[1]
         
         # 直接读取 dpo_pair 结构
         dpo_pair = item.get("dpo_pair", {})
@@ -694,8 +690,8 @@ class DPODataset(Dataset):
             chosen_path, rejected_path, caption, target_width, target_height = self._get_preference_pair(idx)
 
         # 加载图片
-        chosen_img = self.load_image(chosen_path, target_width, target_height)
-        rejected_img = self.load_image(rejected_path, target_width, target_height)
+        chosen_img = self.load_image(chosen_path, target_height, target_width)
+        rejected_img = self.load_image(rejected_path, target_height, target_width)
 
         # Caption Dropout (维持 CFG 能力)
         if random.random() < self.caption_dropout_rate:
