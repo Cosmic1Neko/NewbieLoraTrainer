@@ -106,7 +106,7 @@ def calculate_sdpo_loss(model_chosen_mse, model_rejected_mse, ref_chosen_mse, re
     loss = -F.logsigmoid(beta * (logits - margin)).mean()
     return loss
 
-def compute_loss(model, ref_model, vae, text_encoder, tokenizer, clip_model, clip_tokenizer, transport, batch, device, gemma3_prompt="", beta=1000.0):
+def compute_loss(model, ref_model, vae, text_encoder, tokenizer, clip_model, clip_tokenizer, transport, batch, device, gemma3_prompt="", beta=1000.0, mu=0.0, dmpo_alpha=0.0):
     pixel_values_chosen = batch["pixel_values_chosen"].to(device)
     pixel_values_rejected = batch["pixel_values_rejected"].to(device)
     captions = batch["captions"]
@@ -140,7 +140,7 @@ def compute_loss(model, ref_model, vae, text_encoder, tokenizer, clip_model, cli
     model_kwargs = dict(cap_feats=cap_feats, cap_mask=cap_mask, clip_text_pooled=clip_text_pooled)
 
     ############ 损失计算 ############
-    loss = transport.training_dpo_losses(model, ref_model, latents_chosen, latents_rejected, beta, model_kwargs)["loss"].mean()
+    loss = transport.training_dpo_losses(model, ref_model, latents_chosen, latents_rejected, beta, mu, dmpo_alpha, model_kwargs)["loss"].mean()
     
     return loss
 
@@ -327,6 +327,8 @@ def main():
                     accelerator.device, 
                     config['Model'].get('gemma3_prompt', ''),
                     beta=config['Model']['beta']
+                    mu=config['Model']['mu']
+                    dmpo_alpha=config['Model']['dmpo_alpha']
                 )
                 epoch_losses.append(loss.item())
                 accelerator.backward(loss)
