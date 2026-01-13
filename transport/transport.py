@@ -241,6 +241,66 @@ class Transport:
             raise NotImplementedError()
 
         return score_fn
+    
+    def training_dpo_losses(self, model, ref_model, x1_chosen, x1_rejected, beta=1000.0, model_kwargs=None):
+        """
+        为纠正流模型实现的 DPO 损失函数。
+        
+        参数:
+            model: 正在训练的目标模型（Policy Model）。
+            ref_model: 冻结的参考模型（Reference Model）。
+            x1_chosen: 用户偏好的图像 Batch [B, C, H, W]。
+            x1_rejected: 用户不偏好的图像 Batch [B, C, H, W]。
+            beta: DPO 的正则化系数，SDXL 训练通常取 1000-5000 [cite: 163]。
+            model_kwargs: 模型的额外参数（如 prompt conditioning）。
+        """
+        if model_kwargs is None:
+            model_kwargs = {}
+
+        # 1. 采样共享的时间步 t 和初始噪声 x0
+        # 使用 self.sample 确保采样逻辑与原父类一致
+        t, x0, _ = self.sample(x1_chosen)
+
+        # 2. 路径规划：为 chosen 和 rejected 图片生成相同的 xt (插值点) 和 ut (目标速度) 
+        # ut 在 VELOCITY 模式下代表目标速度 (x1 - x0)
+        _, xt_w, ut_w = self.path_sampler.plan(t, x0, x1_chosen)
+        _, xt_l, ut_l = self.path_sampler.plan(t, x0, x1_rejected)
+
+        # 3. 前向预测
+        # 当前模型预测
+        model_w_pred = model(xt_w, t, **model_kwargs)
+        model_l_pred = model(xt_l, t, **model_kwargs)
+        
+        # 参考模型预测
+        with torch.no_grad():
+            ref_w_pred = ref_model(xt_w, t, **model_kwargs)
+            ref_l_pred = ref_model(xt_l, t, **model_kwargs)
+
+        if self.model_type != ModelType.VELOCITY:
+            raise ValueError("该 DPO 实现仅适用于 VELOCITY 模型类型（纠正流）。")
+
+        # 4. 计算 MSE 误差 (MSE Error per sample)
+        model_w_err = mean_flat((model_w_pred - ut_w) ** 2)
+        model_l_err = mean_flat((model_l_pred - ut_l) ** 2)
+        ref_w_err = mean_flat((ref_w_pred - ut_w) ** 2)
+        ref_l_err = mean_flat((ref_l_pred - ut_l) ** 2)
+
+        # 5. 计算 DPO 核心项
+        w_diff = model_w_err - ref_w_err
+        l_diff = model_l_err - ref_l_err
+        
+        inside_term = -1 * beta * (w_diff - l_diff)
+        
+        # 计算最终损失
+        loss = -torch.nn.functional.logsigmoid(inside_term).mean()
+
+        terms = {
+            "loss": loss,
+            "model_w_mse": model_w_err.detach().mean(),
+            "model_l_mse": model_l_err.detach().mean(),
+            "t": t
+        }
+        return terms
 
 
 class Sampler:
