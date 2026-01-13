@@ -204,6 +204,11 @@ def main():
     except:
         print(f'{sft_lora_path} is not a valid PEFT LoRA directory path! Falling back to random init.')
 
+    # 创建参考模型 (Reference Model) - 冻结的 SFT 状态
+    ref_model = copy.deepcopy(model)
+    ref_model.eval()
+    ref_model.requires_grad_(False)
+
     # 创建 Rectified Flow transport
     #seq_len = (resolution // 16) ** 2
     transport = create_transport(
@@ -259,11 +264,6 @@ def main():
         vae = vae.to(accelerator.device)
         vae.eval()
         vae.requires_grad_(False)
-    
-    # 创建参考模型 (Reference Model) - 冻结的 SFT 状态
-    ref_model = copy.deepcopy(model)
-    ref_model.eval()
-    ref_model.requires_grad_(False)
     ref_model.to(accelerator.device)
 
     # 训练检查点
