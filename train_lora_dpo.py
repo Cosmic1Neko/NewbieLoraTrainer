@@ -154,7 +154,7 @@ def save_ema_lora_model(accelerator, model, ema_model, config, step=None):
         torch.save(ema_model.state_dict(), resume_path)
 
     # 保存用于推理的 ComfyUI 格式 (.safetensors)
-    ema_model.copy_to(model.parameters())
+    ema_model.copy_to(model)
     
     try:
         if accelerator.is_main_process:
@@ -191,7 +191,7 @@ def save_ema_lora_model(accelerator, model, ema_model, config, step=None):
 
     finally:
         # 3. 恢复原始权重，确保不影响后续训练
-        ema_model.restore(model.parameters())
+        ema_model.restore(model)
 
 def main():
     """主训练函数"""
@@ -298,7 +298,7 @@ def main():
     # EMA 设置
     ema_model = None
     if config['Model'].get('use_ema', True):
-        ema_model = EMAModel(model.parameters(), decay=config['Model'].get('ema_decay', 0.999))
+        ema_model = EMAModel(model, decay=config['Model'].get('ema_decay', 0.999))
 
     # accelerator准备模型
     model, optimizer, scheduler = accelerator.prepare(model, optimizer, scheduler)
@@ -403,7 +403,7 @@ def main():
                     optimizer.zero_grad()
 
                     if ema_model is not None:
-                        ema_model.step(model.parameters())
+                        ema_model.step(model)
 
             if accelerator.sync_gradients:
                 progress_bar.update(1)
