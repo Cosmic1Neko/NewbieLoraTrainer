@@ -200,9 +200,10 @@ def main():
     try:
         print(f"Loading LoRA from: {sft_lora_path}")
         model = PeftModel.from_pretrained(model, sft_lora_path, is_trainable=True)
+        model.print_trainable_parameters()
         model.to(accelerator.device)
     except:
-        print(f'{sft_lora_path} is not a valid PEFT LoRA directory path! Falling back to random init.')
+        print(f'{sft_lora_path} is not a valid PEFT LoRA directory path!')
 
     # 创建参考模型 (Reference Model) - 冻结的 SFT 状态
     ref_model = copy.deepcopy(model)
@@ -326,9 +327,9 @@ def main():
                     batch, 
                     accelerator.device, 
                     config['Model'].get('gemma3_prompt', ''),
-                    beta=config['Model']['beta']
-                    mu=config['Model']['mu']
-                    dmpo_alpha=config['Model']['dmpo_alpha']
+                    beta=config['Model']['beta'],
+                    mu=config['Model']['mu'],
+                    dmpo_alpha=config['Model']['dmpo_alpha'],
                 )
                 epoch_losses.append(loss.item())
                 accelerator.backward(loss)
