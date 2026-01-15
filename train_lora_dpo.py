@@ -253,6 +253,7 @@ def main():
         model.to(accelerator.device)
     except:
         print(f'{sft_lora_path} is not a valid PEFT LoRA directory path!')
+        raise
 
     # 创建参考模型 (Reference Model) - 冻结的 SFT 状态
     ref_model = copy.deepcopy(model)
@@ -328,6 +329,7 @@ def main():
                 logger.info(f"Successfully resumed EMA weights from {ema_path}")
             except Exception as e:
                 logger.warning(f"Failed to load EMA weights: {e}")
+                raise
         else:
             logger.warning(f"Resuming training but EMA weights file not found at {ema_path}")
     
