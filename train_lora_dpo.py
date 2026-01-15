@@ -29,7 +29,7 @@ from safetensors.torch import load_file, save_file
 from models.model import NewbieModel
 from models.components import NewbieConfig
 from dataset import DPODataset
-from train_newbie_lora import load_model_and_tokenizer, setup_scheduler, setup_optimizer, save_checkpoint, save_lora_model
+from train_newbie_lora import load_model_and_tokenizer, setup_scheduler, setup_optimizer, save_checkpoint, save_lora_model, load_checkpoint
 from transport import create_transport
 try:
     import bitsandbytes as bnb
@@ -40,38 +40,34 @@ logger = get_logger(__name__)
 
 class EMAModel:
     """
-    Exponential Moving Average of models weights
+    EMA 模型
     """
-    def __init__(self, parameters: List[torch.nn.Parameter], decay=0.999):
+    def __init__(self, model, decay=0.999):
         self.decay = decay
-        self.shadow = {id(p): p.clone().detach() for p in parameters if p.requires_grad}
-        self.collected_params = []
-
-    def step(self, parameters: List[torch.nn.Parameter]):
-        for p in parameters:
+        self.shadow = {}
+        self.id_to_name = {}
+        
+        for name, p in model.named_parameters():
             if p.requires_grad:
-                p_id = id(p)
-                if p_id in self.shadow:
-                    new_average = (1.0 - self.decay) * p.detach() + self.decay * self.shadow[p_id]
-                    self.shadow[p_id] = new_average.clone()
+                self.shadow[name] = p.clone().detach()
+                self.id_to_name[id(p)] = name
 
-    def copy_to(self, parameters: List[torch.nn.Parameter]):
-        """
-        Copy current parameters to collected_params to save them, 
-        and replace current parameters with shadow weights.
-        """
-        self.collected_params = [p.clone().detach() for p in parameters if p.requires_grad]
-        for p in parameters:
-            if p.requires_grad and id(p) in self.shadow:
-                p.data.copy_(self.shadow[id(p)].data)
+    def step(self, model):
+        # 遍历模型的当前参数
+        for name, p in model.named_parameters():
+            if p.requires_grad:
+                if name in self.shadow:
+                    new_average = (1.0 - self.decay) * p.detach() + self.decay * self.shadow[name]
+                    self.shadow[name] = new_average.clone()
 
-    def restore(self, parameters: List[torch.nn.Parameter]):
-        """
-        Restore the parameters saved in copy_to.
-        """
-        for p, saved in zip([p for p in parameters if p.requires_grad], self.collected_params):
-            p.data.copy_(saved.data)
-        self.collected_params = []
+    def copy_to(self, model):
+        """将 EMA 权重应用到模型"""
+        for name, p in model.named_parameters():
+            if p.requires_grad and name in self.shadow:
+                p.data.copy_(self.shadow[name].data)
+
+    def restore(self, model):
+        pass
     
     def state_dict(self):
         return self.shadow
@@ -130,44 +126,50 @@ def compute_loss(model, ref_model, vae, text_encoder, tokenizer, clip_model, cli
 
 def save_ema_lora_model(accelerator, model, ema_model, config, step=None):
     """
-    保存 EMA 模型的 LoRA 权重（仅保存 ComfyUI 兼容的 .safetensors 单文件）。
-    1. 将 EMA 权重临时应用到模型上。
-    2. 提取并转换权重为 ComfyUI 格式。
-    3. 恢复原始模型权重。
+    保存 EMA 模型的 LoRA 权重
+    1. 保存用于 Resume 的原始 EMA 状态 (.pt 文件)。
+    2. 将 EMA 权重临时应用到模型上。
+    3. 提取并转换权重为 ComfyUI 格式 (.safetensors 文件)。
+    4. 恢复原始模型权重。
     """
-    # 1. 将 EMA 权重应用到模型中 (备份当前权重)
+    # 获取输出路径
+    output_dir = config['Model']['output_dir']
+    output_name = config['Model']['output_name']
+    
+    # 仅在主进程执行保存
+    if accelerator.is_main_process:
+        os.makedirs(output_dir, exist_ok=True)
+        step_suffix = f"_step_{step}" if step is not None else ""
+        checkpoint_dir = os.path.join(output_dir, "checkpoints")
+        os.makedirs(checkpoint_dir, exist_ok=True)
+        
+        resume_filename = f"ema_weights{step_suffix}.pt"
+        resume_path = os.path.join(checkpoint_dir, resume_filename)
+        
+        # 直接保存 EMA 模型的内部状态 (self.shadow)
+        torch.save(ema_model.state_dict(), resume_path)
+
+    # 保存用于推理的 ComfyUI 格式 (.safetensors)
     ema_model.copy_to(model.parameters())
     
     try:
-        # 仅在主进程执行保存，避免多进程写入冲突
         if accelerator.is_main_process:
-            output_dir = config['Model']['output_dir']
-            output_name = config['Model']['output_name']
-            os.makedirs(output_dir, exist_ok=True)
-            
-            # 定义文件名标识
-            step_suffix = f"_step_{step}" if step is not None else ""
-            
-            # 解包模型以获取原始 PeftModel
             unwrapped = accelerator.unwrap_model(model)
-            
-            # 获取仅包含 LoRA 权重的 state_dict
             lora_state_dict = get_peft_model_state_dict(unwrapped)
             comfy_state_dict = {}
             
             for key, value in lora_state_dict.items():
-                # 1. 转换 DoRA (如果有)
+                # A. 转换 DoRA (如果有)
                 if key.endswith(".lora_magnitude_vector"):
                     key = key.replace(".lora_magnitude_vector", ".dora_scale")
-                    # ComfyUI 需要二维 [dim, 1] 而不是一维 [dim]
                     if len(value.shape) == 1:
                         value = value.unsqueeze(1)
                 
-                # 2. 替换前缀 (适配 Diffusers -> ComfyUI)
+                # B. 替换前缀 (适配 Diffusers -> ComfyUI)
                 if key.startswith("base_model.model."):
                     key = "diffusion_model." + key[len("base_model.model."):]
                 
-                # 3. 转换 LoRA 键名 (lora_A/B -> lora_down/up)
+                # C. 转换 LoRA 键名 (lora_A/B -> lora_down/up)
                 if "lora_A.weight" in key:
                     key = key.replace("lora_A.weight", "lora_down.weight")
                 elif "lora_B.weight" in key:
@@ -175,7 +177,7 @@ def save_ema_lora_model(accelerator, model, ema_model, config, step=None):
                 
                 comfy_state_dict[key] = value
             
-            # 构造文件名
+            # 构造 ComfyUI 文件名
             comfy_filename = f"{output_name}_ema{step_suffix}.safetensors"
             comfy_path = os.path.join(output_dir, comfy_filename)
             
@@ -184,7 +186,7 @@ def save_ema_lora_model(accelerator, model, ema_model, config, step=None):
             logger.info(f"ComfyUI compatible EMA LoRA saved to: {comfy_path}")
 
     finally:
-        # 2. 恢复原始权重，确保不影响后续训练
+        # 3. 恢复原始权重，确保不影响后续训练
         ema_model.restore(model.parameters())
 
 def main():
@@ -312,6 +314,18 @@ def main():
 
     # 训练检查点
     start_step = load_checkpoint(accelerator, model, optimizer, scheduler, config)
+    if start_step > 0 and ema_model is not None:
+        ema_path = os.path.join(config['Model']['output_dir'], "checkpoint/ema_weights.pt")
+        
+        if os.path.exists(ema_path):
+            try:
+                ema_state = torch.load(ema_path, map_location=accelerator.device)
+                ema_model.load_state_dict(ema_state)
+                logger.info(f"Successfully resumed EMA weights from {ema_path}")
+            except Exception as e:
+                logger.warning(f"Failed to load EMA weights: {e}")
+        else:
+            logger.warning(f"Resuming training but EMA weights file not found at {ema_path}")
     
     logger.info("Training started")
     global_step = start_step
