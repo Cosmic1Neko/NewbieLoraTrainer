@@ -45,12 +45,11 @@ class EMAModel:
     def __init__(self, model, decay=0.999):
         self.decay = decay
         self.shadow = {}
-        self.id_to_name = {}
+        self.backup = {}
         
         for name, p in model.named_parameters():
             if p.requires_grad:
                 self.shadow[name] = p.clone().detach()
-                self.id_to_name[id(p)] = name
 
     def step(self, model):
         # 遍历模型的当前参数
@@ -64,10 +63,15 @@ class EMAModel:
         """将 EMA 权重应用到模型"""
         for name, p in model.named_parameters():
             if p.requires_grad and name in self.shadow:
+                self.backup[name] = p.data.clone()
                 p.data.copy_(self.shadow[name].data)
 
     def restore(self, model):
-        pass
+        """恢复备份的原始权重"""
+        for name, p in model.named_parameters():
+            if name in self.backup:
+                p.data.copy_(self.backup[name])
+        self.backup = {}
     
     def state_dict(self):
         return self.shadow
