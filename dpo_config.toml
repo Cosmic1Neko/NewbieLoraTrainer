@@ -1,0 +1,71 @@
+# =============================================================================
+# Newbie LoRA DPO (Direct Preference Optimization) 配置文件
+# =============================================================================
+
+[Model]
+# ---------------- 基础路径配置 ----------------
+# 基础模型路径 (Diffusers 格式)
+base_model_path = "/root/autodl-tmp/NewBie"
+
+# SFT LoRA 路径 (重要)
+# DPO 通常在 SFT 之后进行。指向你 train_newbie_lora.py 训练出的文件夹
+sft_lora_path = "/root/autodl-tmp/output/NewbieLoRA"
+
+# 偏好数据集路径 (JSON)
+# 由 dataset_reward.py 生成的带有 "dpo_pair" 字段的 JSON
+preference_json = "/root/autodl-tmp/gen_datasets/dataset_scored.json"
+
+# 输出目录
+output_dir = "/root/autodl-tmp/output_dpo"
+output_name = "NewBieDPOLoRA"
+
+# wandb的api key, 用于查看训练损失与过程 
+wandb_key = ""
+
+# ---------------- 训练参数 ----------------
+# DPO 显存消耗较大，建议 Batch Size = 1
+train_batch_size = 1
+gradient_accumulation_steps = 8  
+
+# DPO 训练轮数通常较少
+num_epochs = 10
+save_epochs_interval = 1
+
+# DPO 学习率通常比 SFT 低一个数量级
+learning_rate = 1e-5  # SFT常用 1e-4，DPO 建议 5e-6 ~ 1e-5
+lr_scheduler = "constant_with_warmup"
+lr_warmup_steps = 500
+
+# ---------------- DPO 算法参数 (核心) ----------------
+# DPO 正则化强度 (Beta)
+beta = 5000.0
+
+# SDPO 胜者保护系数 (Winner Preserving Mu)
+# 0.0 = 关闭 (标准 DPO)
+# 0.6 = 推荐值 (保护生成质量)
+mu = 0.6
+
+# DMPO 目标分布系数 (Alpha)
+# 0.0 = 关闭 (标准 DPO)
+# 0.01 = 开启 DMPO (防止过拟合)
+dmpo_alpha = 0.01
+
+# ---------------- 数据集参数 ----------------
+dataloader_num_workers = 4
+caption_dropout_rate = 0.05
+# 真实图像混合比例
+real_ratio = 0.2
+
+# Gemma3 Prompt
+gemma3_prompt = "You are an assistant designed to generate high-quality anime images with the highest degree of image-text alignment based on textual prompts. <Prompt Start>\n"
+
+# ---------------- 杂项 ----------------
+mixed_precision = "bf16"
+gradient_checkpointing = true
+use_ema = true  # DPO 通常可以关闭 EMA 以节省显存
+
+[Optimization]
+optimizer_type = "AdamW8bit"
+weight_decay = 0.001
+gradient_clip_norm = 1.0
+use_flash_attention_2 = true
