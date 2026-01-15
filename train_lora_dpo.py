@@ -99,9 +99,9 @@ def compute_loss(model, ref_model, vae, text_encoder, tokenizer, clip_model, cli
     shift_factor = getattr(vae.config, 'shift_factor', 0.1159)
 
     with torch.no_grad():
-        latents_chosen = vae.encode(pixel_values_chosen).latent_dist.sample()
+        latents_chosen = vae.encode(pixel_values_chosen).latent_dist.mode()
         latents_chosen = (latents_chosen - shift_factor) * scaling_factor
-        latents_rejected = vae.encode(pixel_values_rejected).latent_dist.sample()
+        latents_rejected = vae.encode(pixel_values_rejected).latent_dist.mode()
         latents_rejected = (latents_rejected - shift_factor) * scaling_factor
         
         # Gemma 编码
