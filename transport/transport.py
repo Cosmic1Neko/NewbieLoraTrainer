@@ -268,6 +268,7 @@ class Transport:
         _, xt_l, ut_l = self.path_sampler.plan(t, x0, x1_rejected)
 
         # 3. 前向预测
+        """
         # 当前模型预测
         model_w_pred = model(xt_w, t, **model_kwargs)
         model_l_pred = model(xt_l, t, **model_kwargs)
@@ -276,7 +277,22 @@ class Transport:
         with torch.no_grad():
             ref_w_pred = ref_model(xt_w, t, **model_kwargs)
             ref_l_pred = ref_model(xt_l, t, **model_kwargs)
-
+        """
+        # 拼接输入 (Batch Size: B -> 2B)
+        xt_cat = torch.cat([xt_w, xt_l], dim=0)
+        t_cat = torch.cat([t, t], dim=0)
+        # 拼接caption
+        model_kwargs_cat = {
+            k: torch.cat([v, v], dim=0) if isinstance(v, torch.Tensor) else v
+            for k, v in model_kwargs.items()
+        }
+        model_pred_cat = model(xt_cat, t_cat, **model_kwargs_cat)
+        with torch.no_grad():
+            ref_pred_cat = ref_model(xt_cat, t_cat, **model_kwargs_cat)
+        # 拆分输出结果
+        model_w_pred, model_l_pred = model_pred_cat.chunk(2, dim=0)
+        ref_w_pred, ref_l_pred = ref_pred_cat.chunk(2, dim=0)
+    
         if self.model_type != ModelType.VELOCITY:
             raise ValueError("该 DPO 实现仅适用于 VELOCITY 模型类型（纠正流）。")
 
