@@ -90,22 +90,6 @@ def collate_fn(batch):
         "captions": captions
     }
 
-def calculate_sdpo_loss(model_chosen_mse, model_rejected_mse, ref_chosen_mse, ref_rejected_mse, beta=0.1, margin=0.5):
-    """
-    实现 Safeguarded DPO Loss
-    在扩散模型中，log-prob 的差值可以用负 MSE 的差值来近似
-    """
-    # 隐式奖励计算 (Reward = -MSE)
-    model_pref_delta = (model_rejected_mse - model_chosen_mse)
-    ref_pref_delta = (ref_rejected_mse - ref_chosen_mse)
-    
-    # DPO 核心项
-    logits = model_pref_delta - ref_pref_delta
-    
-    # SDPO 加入安全边界 margin
-    loss = -F.logsigmoid(beta * (logits - margin)).mean()
-    return loss
-
 def compute_loss(model, ref_model, vae, text_encoder, tokenizer, clip_model, clip_tokenizer, transport, batch, device, gemma3_prompt="", beta=1000.0, mu=0.0, dmpo_alpha=0.0):
     pixel_values_chosen = batch["pixel_values_chosen"].to(device)
     pixel_values_rejected = batch["pixel_values_rejected"].to(device)
@@ -143,6 +127,65 @@ def compute_loss(model, ref_model, vae, text_encoder, tokenizer, clip_model, cli
     loss = transport.training_dpo_losses(model, ref_model, latents_chosen, latents_rejected, beta, mu, dmpo_alpha, model_kwargs)["loss"].mean()
     
     return loss
+
+def save_ema_lora_model(accelerator, model, ema_model, config, step=None):
+    """
+    保存 EMA 模型的 LoRA 权重（仅保存 ComfyUI 兼容的 .safetensors 单文件）。
+    1. 将 EMA 权重临时应用到模型上。
+    2. 提取并转换权重为 ComfyUI 格式。
+    3. 恢复原始模型权重。
+    """
+    # 1. 将 EMA 权重应用到模型中 (备份当前权重)
+    ema_model.copy_to(model.parameters())
+    
+    try:
+        # 仅在主进程执行保存，避免多进程写入冲突
+        if accelerator.is_main_process:
+            output_dir = config['Model']['output_dir']
+            output_name = config['Model']['output_name']
+            os.makedirs(output_dir, exist_ok=True)
+            
+            # 定义文件名标识
+            step_suffix = f"_step_{step}" if step is not None else ""
+            
+            # 解包模型以获取原始 PeftModel
+            unwrapped = accelerator.unwrap_model(model)
+            
+            # 获取仅包含 LoRA 权重的 state_dict
+            lora_state_dict = get_peft_model_state_dict(unwrapped)
+            comfy_state_dict = {}
+            
+            for key, value in lora_state_dict.items():
+                # 1. 转换 DoRA (如果有)
+                if key.endswith(".lora_magnitude_vector"):
+                    key = key.replace(".lora_magnitude_vector", ".dora_scale")
+                    # ComfyUI 需要二维 [dim, 1] 而不是一维 [dim]
+                    if len(value.shape) == 1:
+                        value = value.unsqueeze(1)
+                
+                # 2. 替换前缀 (适配 Diffusers -> ComfyUI)
+                if key.startswith("base_model.model."):
+                    key = "diffusion_model." + key[len("base_model.model."):]
+                
+                # 3. 转换 LoRA 键名 (lora_A/B -> lora_down/up)
+                if "lora_A.weight" in key:
+                    key = key.replace("lora_A.weight", "lora_down.weight")
+                elif "lora_B.weight" in key:
+                    key = key.replace("lora_B.weight", "lora_up.weight")
+                
+                comfy_state_dict[key] = value
+            
+            # 构造文件名
+            comfy_filename = f"{output_name}_ema{step_suffix}.safetensors"
+            comfy_path = os.path.join(output_dir, comfy_filename)
+            
+            # 保存单文件
+            save_file(comfy_state_dict, comfy_path)
+            logger.info(f"ComfyUI compatible EMA LoRA saved to: {comfy_path}")
+
+    finally:
+        # 2. 恢复原始权重，确保不影响后续训练
+        ema_model.restore(model.parameters())
 
 def main():
     """主训练函数"""
@@ -367,7 +410,7 @@ def main():
                 if global_step % 1000 == 0:
                     save_checkpoint(accelerator, model, optimizer, scheduler, global_step, config)
                     if ema_model:
-                        torch.save(ema_model.state_dict(), os.path.join(config['Model']['output_dir'], "ema_weights.pt"))
+                        save_ema_lora_model(accelerator, model, ema_model, config, step=global_step)
 
         avg_epoch_loss = sum(epoch_losses) / len(epoch_losses) if epoch_losses else 0.0
         logger.info(f"Epoch {epoch+1}/{config['Model']['num_epochs']} completed - Average Loss: {avg_epoch_loss:.4f}")
@@ -375,11 +418,12 @@ def main():
         if save_epochs_interval == 0 or (epoch + 1) % save_epochs_interval == 0:
             save_checkpoint(accelerator, model, optimizer, scheduler, global_step, config)
             if ema_model:
-                torch.save(ema_model.state_dict(), os.path.join(config['Model']['output_dir'], "ema_weights.pt"))
+                save_ema_lora_model(accelerator, model, ema_model, config, step=global_step)
             logger.info(f"Checkpoint saved at epoch {epoch+1}")
 
     logger.info("Training complete, saving final model")
     save_lora_model(accelerator, model, config)
+    save_ema_lora_model(accelerator, model, ema_model, config, step=global_step)
 
     if accelerator.is_main_process:
         accelerator.end_training()
