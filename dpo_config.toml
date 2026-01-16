@@ -9,11 +9,11 @@ base_model_path = "/root/autodl-tmp/NewBie"
 
 # SFT LoRA 路径 (重要)
 # DPO 通常在 SFT 之后进行。指向你 train_newbie_lora.py 训练出的文件夹
-sft_lora_path = "/root/autodl-tmp/output/NewbieLoRA"
+sft_lora_path = "/root/autodl-tmp/output/NewBieLoRA"
 
 # 偏好数据集路径 (JSON)
 # 由 dataset_reward.py 生成的带有 "dpo_pair" 字段的 JSON
-preference_json = "/root/autodl-tmp/gen_datasets/dataset_scored.json"
+preference_json = "/root/autodl-tmp/gen_dataset/dataset_scored.json"
 
 # 输出目录
 output_dir = "/root/autodl-tmp/output_dpo"
