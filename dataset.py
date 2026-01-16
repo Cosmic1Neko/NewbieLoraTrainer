@@ -581,10 +581,10 @@ class DPODataset(Dataset):
         # 加载单一的 JSON 数据集
         with open(preference_json_path, 'r', encoding='utf-8') as f:
             raw_data = json.load(f)
-        # 过滤掉被标记为 rejected 的数据
+        # 过滤掉被标记为 discarded 的数据
         self.all_data = [
             item for item in raw_data
-            if item.get("annotation_status") != "rejected"
+            if item.get("annotation_status") != "discarded"
         ]
         # 筛选出有效的偏好对数据
         # 必须包含 dpo_pair 且其中有 chosen 和 rejected 路径
@@ -672,6 +672,9 @@ class DPODataset(Dataset):
         chosen_path = dpo_pair.get("chosen")
         rejected_path = dpo_pair.get("rejected")
         caption = item.get("caption", "")
+
+        if item.get("annotation_status") == "swapped":
+            chosen_path, rejected_path = rejected_path, chosen_path
         
         return chosen_path, rejected_path, caption, target_width, target_height
 
