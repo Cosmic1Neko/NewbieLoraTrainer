@@ -316,7 +316,7 @@ class Transport:
             lam = th.where(
                 den > 0,
                 ((1.0 - float(mu)) * num) / (den + 1e-9),
-                torch.tensor(1.0, device=model_w_pred.device, dtype=model_w_pred.dtype)
+                th.tensor(1.0, device=model_w_pred.device, dtype=model_w_pred.dtype)
             )
             # 限制 λ 在 [0, 1.0] 范围内以保证稳定性
             lam = lam.clamp(min=0.0, max=1.0).detach()
