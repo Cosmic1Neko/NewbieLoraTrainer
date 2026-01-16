@@ -1,3 +1,6 @@
+#!/usr/bin/env python3
+"""Newbie LoRA 训练器 - 基于 Rectified Flow 的 LoRA DPO"""
+
 import argparse
 import copy
 import json
@@ -11,7 +14,6 @@ import toml
 from datetime import datetime
 
 import torch
-import torch.nn.functional as F
 import torch.utils.checkpoint
 from accelerate import Accelerator, DistributedDataParallelKwargs
 from accelerate.logging import get_logger
@@ -26,8 +28,7 @@ from transformers import AutoTokenizer, AutoModel, AutoConfig
 from peft import LoraConfig, get_peft_model, PeftModel, get_peft_model_state_dict, set_peft_model_state_dict
 from safetensors.torch import load_file, save_file
 
-from models.model import NewbieModel
-from models.components import NewbieConfig
+import models
 from dataset import DPODataset
 from train_newbie_lora import load_model_and_tokenizer, setup_scheduler, setup_optimizer, save_checkpoint, save_lora_model, load_checkpoint
 from transport import create_transport
