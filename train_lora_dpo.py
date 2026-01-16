@@ -194,6 +194,39 @@ def save_ema_lora_model(accelerator, model, ema_model, config, step=None):
         # 3. 恢复原始权重，确保不影响后续训练
         ema_model.restore(model)
 
+class ReferenceModelWrapper(torch.nn.Module):
+    """
+    一个包装器，用于复用 Base Model。
+    在执行 forward 时临时切换到 'reference' adapter，
+    执行完毕后恢复到 'default' adapter。
+    """
+    def __init__(self, model, accelerator):
+        super().__init__()
+        self.model = model
+        self.accelerator = accelerator
+
+    def forward(self, *args, **kwargs):
+        # 获取底层的 PeftModel
+        unwrapped = self.accelerator.unwrap_model(self.model)
+        
+        # 1. 切换到参考 Adapter
+        # 保存之前的状态（主要是 training/eval 模式）
+        was_training = unwrapped.training
+        previous_adapter = unwrapped.active_adapter
+        
+        # 切换 adapter 并强制设为 eval 模式 (关闭 Dropout 等)
+        unwrapped.set_adapter("reference")
+        unwrapped.eval()
+        
+        try:
+            # 2. 执行前向传播
+            return self.model(*args, **kwargs)
+        finally:
+            # 3. 恢复
+            if was_training:
+                unwrapped.train()
+            unwrapped.set_adapter(previous_adapter)
+
 def main():
     """主训练函数"""
     parser = argparse.ArgumentParser(description="Newbie LoRA DPO Trainer")
@@ -248,18 +281,18 @@ def main():
     # 应用 LoRA
     sft_lora_path = config['Model'].get('sft_lora_path', "")
     try:
-        print(f"Loading LoRA from: {sft_lora_path}")
+        print(f"Loading Trainable LoRA (Policy) from: {sft_lora_path}")
+        # 1. 加载用于训练的 Adapter (默认名称为 'default')
         model = PeftModel.from_pretrained(model, sft_lora_path, is_trainable=True)
+        # 2. 再次加载相同的 LoRA 作为参考 Adapter (命名为 'reference'), 这样我们就在显存中只存了一份 Base Model，但有两份轻量级的 LoRA
+        print(f"Loading Frozen LoRA (Reference) from: {sft_lora_path}")
+        model.load_adapter(sft_lora_path, adapter_name="reference")
+        model.set_adapter("default")
         model.print_trainable_parameters()
         model.to(accelerator.device)
-    except:
+    except Exception as e:
         print(f'{sft_lora_path} is not a valid PEFT LoRA directory path!')
         raise
-
-    # 创建参考模型 (Reference Model) - 冻结的 SFT 状态
-    ref_model = copy.deepcopy(model)
-    ref_model.eval()
-    ref_model.requires_grad_(False)
 
     # 创建 Rectified Flow transport
     #seq_len = (resolution // 16) ** 2
@@ -304,6 +337,7 @@ def main():
 
     # accelerator准备模型
     model, optimizer, scheduler = accelerator.prepare(model, optimizer, scheduler)
+    ref_model = ReferenceModelWrapper(model, accelerator)
     if text_encoder is not None:
         text_encoder = text_encoder.to(accelerator.device)
         text_encoder.eval()
@@ -316,7 +350,6 @@ def main():
         vae = vae.to(accelerator.device)
         vae.eval()
         vae.requires_grad_(False)
-    ref_model.to(accelerator.device)
 
     # 训练检查点
     start_step = load_checkpoint(accelerator, model, optimizer, scheduler, config)
