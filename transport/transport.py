@@ -279,15 +279,15 @@ class Transport:
             ref_l_pred = ref_model(xt_l, t, **model_kwargs)
         """
         # 拼接输入 (Batch Size: B -> 2B)
-        xt_cat = torch.cat([xt_w, xt_l], dim=0)
-        t_cat = torch.cat([t, t], dim=0)
+        xt_cat = th.cat([xt_w, xt_l], dim=0)
+        t_cat = th.cat([t, t], dim=0)
         # 拼接caption
         model_kwargs_cat = {
-            k: torch.cat([v, v], dim=0) if isinstance(v, torch.Tensor) else v
+            k: th.cat([v, v], dim=0) if isinstance(v, th.Tensor) else v
             for k, v in model_kwargs.items()
         }
         model_pred_cat = model(xt_cat, t_cat, **model_kwargs_cat)
-        with torch.no_grad():
+        with th.no_grad():
             ref_pred_cat = ref_model(xt_cat, t_cat, **model_kwargs_cat)
         # 拆分输出结果
         model_w_pred, model_l_pred = model_pred_cat.chunk(2, dim=0)
@@ -313,7 +313,7 @@ class Transport:
             den = (gB.flatten() * gA.flatten()).sum()             # gB · gA (点积)
             
             # 当 den > 0 (梯度方向同向) 时计算缩放因子 λ，否则不限制 (设为 1.0)
-            lam = torch.where(
+            lam = th.where(
                 den > 0,
                 ((1.0 - float(mu)) * num) / (den + 1e-9),
                 torch.tensor(1.0, device=model_w_pred.device, dtype=model_w_pred.dtype)
@@ -335,21 +335,21 @@ class Transport:
         # 7. 计算最终 Loss (DMPO + SDPO)
         if dmpo_alpha > 0:
             # DMPO: 将偏好优化转化为 KL 散度最小化任务
-            p = torch.sigmoid(inside_term)
+            p = th.sigmoid(inside_term)
             q_val = 1.0 - dmpo_alpha
             eps = 1e-6
             q_val = max(eps, min(1.0 - eps, q_val)) # 目标分布 q 边界保护
             
             # 采用数值稳定的 softplus 计算 log 概率
-            log_p = -torch.nn.functional.softplus(-inside_term)
-            log_1mp = -torch.nn.functional.softplus(inside_term)
+            log_p = -th.nn.functional.softplus(-inside_term)
+            log_1mp = -th.nn.functional.softplus(inside_term)
             
             # KL(p||q) = p*log(p/q) + (1-p)*log((1-p)/(1-q))
             loss = p * (log_p - math.log(q_val)) + (1 - p) * (log_1mp - math.log(1 - q_val))
             loss = loss.mean()
         else:
             # 默认为标准 DPO Logsimgoid 损失
-            loss = -torch.nn.functional.logsigmoid(inside_term).mean()
+            loss = -th.nn.functional.logsigmoid(inside_term).mean()
 
         terms = {
             "loss": loss,
