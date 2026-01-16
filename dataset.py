@@ -584,7 +584,7 @@ class DPODataset(Dataset):
         # 过滤掉被标记为 discarded 的数据
         self.all_data = [
             item for item in raw_data
-            if item.get("annotation_status") != "discarded"
+            if item.get("annotation_status") in ["swapped", "confirmed"]
         ]
         # 筛选出有效的偏好对数据
         # 必须包含 dpo_pair 且其中有 chosen 和 rejected 路径
@@ -595,7 +595,7 @@ class DPODataset(Dataset):
         # 筛选出可用于正则化的数据
         self.real_reg_data = [
             item for item in self.preference_data
-            if item.get("real_image_path") and item.get("generated_image_path")
+            if item.get("real_image_path") and item.get("generated_image_paths")
         ]
         
         print(f"Dataset loaded from {preference_json_path}")
@@ -650,7 +650,7 @@ class DPODataset(Dataset):
         
         # 2. 获取 Rejected (Generated)
         # offline_dataset.py 可能会生成 num_samples > 1，所以 generated 可能是列表
-        gen_candidates = item.get("generated_image_path")
+        gen_candidates = item.get("generated_image_paths")
         
         rejected_path = None
         if isinstance(gen_candidates, list):
