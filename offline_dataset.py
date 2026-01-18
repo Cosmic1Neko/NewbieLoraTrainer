@@ -51,6 +51,32 @@ def parse_args():
 def main():
     args = parse_args()
 
+    os.makedirs(args.output_dir, exist_ok=True)
+    gen_images_dir = os.path.join(args.output_dir, "generated")
+    os.makedirs(gen_images_dir, exist_ok=True)
+    output_json = os.path.join(args.output_dir, "dataset.json")
+
+    results = []
+    processed_keys = set()
+
+    # 尝试加载现有进度
+    if os.path.exists(output_json):
+        try:
+            print(f"检测到现有数据文件: {output_json}，正在加载以恢复进度...")
+            with open(output_json, 'r', encoding='utf-8') as f:
+                results = json.load(f)
+            
+            # 构建已处理的 (绝对路径, caption) 集合，用于快速查找
+            for item in results:
+                # 确保使用绝对路径作为 Key，与后续逻辑一致
+                key = (item['real_image_path'], item['caption'])
+                processed_keys.add(key)
+            
+            print(f"已加载 {len(results)} 条历史记录，将跳过这些样本。")
+        except Exception as e:
+            print(f"加载现有数据出错 ({e})，将重新开始生成。")
+            results = []
+  
     if args.seed is not None:
         random.seed(args.seed)
         np.random.seed(args.seed)
@@ -146,10 +172,11 @@ def main():
 
     batch_size = args.num_samples # args.num_samples
     
-    for i in tqdm(target_indices):
+    for i in tqdm(target_indices, desc="Processing Images"):
         img_path = dataset.image_paths[i]
         raw_caption = dataset.captions[i]
         target_width, target_height = dataset.image_to_bucket[i]
+        current_abs_path = os.path.abspath(img_path)
         
         # 处理 Wildcard: 获取所有可能的 caption 变体
         captions_to_process = [raw_caption]
@@ -158,105 +185,107 @@ def main():
         captions_to_process = [c.replace(" ||| ", ", ") for c in captions_to_process]
 
         for cap_idx, caption in enumerate(captions_to_process):
-            gen_paths = []
-            # 准备编码特征
-            with torch.no_grad():
-                # 编码正向特征
-                gemma_text = gemma3_prompt + caption
-                pos_input = tokenizer([gemma_text], padding="longest", pad_to_multiple_of=8,
-                    truncation=True, max_length=1280, return_tensors="pt"
-                ).to(args.device)
-                current_seq_len = pos_input.input_ids.shape[1]
-                pos_outputs = text_encoder(**pos_input, output_hidden_states=True)
-                pos_cap_feats = pos_outputs.hidden_states[-2].to(dtype=torch.bfloat16)
-                pos_cap_mask = pos_input.attention_mask
+          if (current_abs_path, caption) in processed_keys:
+                continue
+          
+          gen_paths = []
+          # 准备编码特征
+          with torch.no_grad():
+            # 编码正向特征
+            gemma_text = gemma3_prompt + caption
+            pos_input = tokenizer([gemma_text], padding="longest", pad_to_multiple_of=8,
+                truncation=True, max_length=1280, return_tensors="pt"
+            ).to(args.device)
+            current_seq_len = pos_input.input_ids.shape[1]
+            pos_outputs = text_encoder(**pos_input, output_hidden_states=True)
+            pos_cap_feats = pos_outputs.hidden_states[-2].to(dtype=torch.bfloat16)
+            pos_cap_mask = pos_input.attention_mask
             
-                pos_clip_input = clip_tokenizer(
-                    [caption], padding=True, truncation=True,
-                    max_length=2048, return_tensors="pt"
-                ).to(args.device)
-                pos_clip_text_pooled = clip_model.get_text_features(**pos_clip_input).to(dtype=torch.bfloat16)
+            pos_clip_input = clip_tokenizer(
+                [caption], padding=True, truncation=True,
+                max_length=2048, return_tensors="pt"
+            ).to(args.device)
+            pos_clip_text_pooled = clip_model.get_text_features(**pos_clip_input).to(dtype=torch.bfloat16)
 
-                # 1. 重复 uncond 特征 N 次
-                batch_uncond_feats = uncond_cap_feats.repeat(batch_size, 1, 1)[:, :current_seq_len, :]
-                batch_uncond_mask = uncond_cap_mask.repeat(batch_size, 1)[:, :current_seq_len]
-                batch_uncond_pooled = uncond_clip_text_pooled.repeat(batch_size, 1)
+            # 1. 重复 uncond 特征 N 次
+            batch_uncond_feats = uncond_cap_feats.repeat(batch_size, 1, 1)[:, :current_seq_len, :]
+            batch_uncond_mask = uncond_cap_mask.repeat(batch_size, 1)[:, :current_seq_len]
+            batch_uncond_pooled = uncond_clip_text_pooled.repeat(batch_size, 1)
 
-                # 2. 重复 cond 特征 N 次
-                batch_pos_feats = pos_cap_feats.repeat(batch_size, 1, 1)
-                batch_pos_mask = pos_cap_mask.repeat(batch_size, 1)
-                batch_pos_pooled = pos_clip_text_pooled.repeat(batch_size, 1)
+            # 2. 重复 cond 特征 N 次
+            batch_pos_feats = pos_cap_feats.repeat(batch_size, 1, 1)
+            batch_pos_mask = pos_cap_mask.repeat(batch_size, 1)
+            batch_pos_pooled = pos_clip_text_pooled.repeat(batch_size, 1)
 
-                # 3. 拼接 (Concat) -> 形状变成 [2*N, Seq, Dim]
-                cat_cap_feats = torch.cat([batch_uncond_feats, batch_pos_feats])
-                cat_cap_mask = torch.cat([batch_uncond_mask, batch_pos_mask])
-                cat_clip_pooled = torch.cat([batch_uncond_pooled, batch_pos_pooled])
+            # 3. 拼接 (Concat) -> 形状变成 [2*N, Seq, Dim]
+            cat_cap_feats = torch.cat([batch_uncond_feats, batch_pos_feats])
+            cat_cap_mask = torch.cat([batch_uncond_mask, batch_pos_mask])
+            cat_clip_pooled = torch.cat([batch_uncond_pooled, batch_pos_pooled])
 
-                ######################################################################
-                # 1. 初始化 Scheduler
-                scheduler = FlowMatchEulerDiscreteScheduler(num_train_timesteps=1000, use_dynamic_shifting=True)
-                mu = get_lin_function()((target_height // 16) * (target_width // 16))
-                scheduler.set_timesteps(args.steps, mu=mu)
+            ######################################################################
+            # 1. 初始化 Scheduler
+            scheduler = FlowMatchEulerDiscreteScheduler(num_train_timesteps=1000, use_dynamic_shifting=True)
+            mu = get_lin_function()((target_height // 16) * (target_width // 16))
+            scheduler.set_timesteps(args.steps, mu=mu)
                     
-                # 2. 初始化噪声
-                latents = torch.randn(batch_size, 16, target_height // 8, target_width // 8, device=args.device, dtype=torch.bfloat16)
+            # 2. 初始化噪声
+            latents = torch.randn(batch_size, 16, target_height // 8, target_width // 8, device=args.device, dtype=torch.bfloat16)
                     
-                # 3. 采样循环
-                for t in scheduler.timesteps:
-                    t_norm = t / 1000.0
-                    t_model = 1.0 - t_norm
-                    t_tensor = torch.full((batch_size * 2,), t_model, device=args.device, dtype=torch.bfloat16)
+            # 3. 采样循环
+            for t in scheduler.timesteps:
+                t_norm = t / 1000.0
+                t_model = 1.0 - t_norm
+                t_tensor = torch.full((batch_size * 2,), t_model, device=args.device, dtype=torch.bfloat16)
 
-                    # Forward
-                    v_pred = model(
-                        torch.cat([latents, latents]), 
-                        t_tensor, 
-                        cap_feats=cat_cap_feats, 
-                        cap_mask=cat_cap_mask, 
-                        clip_text_pooled=cat_clip_pooled
-                    )
+                # Forward
+                v_pred = model(
+                    torch.cat([latents, latents]), 
+                    t_tensor, 
+                    cap_feats=cat_cap_feats, 
+                    cap_mask=cat_cap_mask, 
+                    clip_text_pooled=cat_clip_pooled
+                )
                         
-                    # 拆分预测速度 v 并进行 CFG 混合
-                    v_uncond, v_cond = v_pred.chunk(2)
-                    v_final = v_uncond + args.cfg_scale * (v_cond - v_uncond)
+                # 拆分预测速度 v 并进行 CFG 混合
+                v_uncond, v_cond = v_pred.chunk(2)
+                v_final = v_uncond + args.cfg_scale * (v_cond - v_uncond)
                         
-                    # 使用 Scheduler 步进更新噪声，注意取反以适配积分方向
-                    latents = scheduler.step(-v_final, t, latents).prev_sample
+                # 使用 Scheduler 步进更新噪声，注意取反以适配积分方向
+                latents = scheduler.step(-v_final, t, latents).prev_sample
                 
-                # 4. VAE 解码
-                latents = (latents / scaling_factor) + shift_factor
-                image = vae.decode(latents.to(vae.dtype)).sample
-                image = (image / 2 + 0.5).clamp(0, 1)
-                image = image.cpu().permute(0, 2, 3, 1).float().numpy()
+            # 4. VAE 解码
+            latents = (latents / scaling_factor) + shift_factor
+            image = vae.decode(latents.to(vae.dtype)).sample
+            image = (image / 2 + 0.5).clamp(0, 1)
+            image = image.cpu().permute(0, 2, 3, 1).float().numpy()
                 
-                # 保存图片
-                gen_paths = []
-                safe_name = Path(img_path).stem
-                for n in range(batch_size):
-                    img_pil = Image.fromarray((image[n] * 255).astype("uint8"))
-                    gen_filename = f"{safe_name}_cap{cap_idx}_sample{n}.jpg"
-                    gen_path = os.path.join(gen_images_dir, gen_filename)
-                    img_pil.save(gen_path, quality=100)
-                    gen_paths.append(os.path.abspath(gen_path))
+            # 保存图片
+            gen_paths = []
+            safe_name = Path(img_path).stem
+            for n in range(batch_size):
+                img_pil = Image.fromarray((image[n] * 255).astype("uint8"))
+                gen_filename = f"{safe_name}_cap{cap_idx}_sample{n}.jpg"
+                gen_path = os.path.join(gen_images_dir, gen_filename)
+                img_pil.save(gen_path, quality=100)
+                gen_paths.append(os.path.abspath(gen_path))
 
-                # 记录数据结构
-                results.append({
-                    "caption": caption,
-                    "real_image_path": os.path.abspath(img_path),
-                    "generated_image_paths": gen_paths,
-                    "resolution": [target_width, target_height],
-                    "meta": {
-                        "lora_source": args.lora_path,
-                        "steps": args.steps,
-                        "cfg_scale": args.cfg_scale,
-                        "sampler": "euler"
-                    }
-                })
+            # 记录数据结构
+            results.append({
+                "caption": caption,
+                "real_image_path": os.path.abspath(img_path),
+                "generated_image_paths": gen_paths,
+                "resolution": [target_width, target_height],
+                "meta": {
+                    "lora_source": args.lora_path,
+                    "steps": args.steps,
+                    "cfg_scale": args.cfg_scale,
+                    "sampler": "euler"
+                }
+            })
 
-    # 6. 输出 JSON 数据库
-    output_json = os.path.join(args.output_dir, "dataset.json")
-    with open(output_json, 'w', encoding='utf-8') as f:
-        json.dump(results, f, ensure_ascii=False, indent=2)
+            # 输出 JSON 数据库
+            with open(output_json, 'w', encoding='utf-8') as f:
+              json.dump(results, f, ensure_ascii=False, indent=2)
     
     print(f"🎉 离线数据库已建立: {output_json}")
     print(f"总计样本数: {len(results)}")
