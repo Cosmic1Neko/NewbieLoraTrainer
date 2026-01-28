@@ -11,4 +11,4 @@ huggingface-hub>=0.20.0
 torchdiffeq>=0.2.0
 wandb
 timm
-
+openmim
