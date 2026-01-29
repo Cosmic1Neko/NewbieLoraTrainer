@@ -11,3 +11,4 @@ torchdiffeq>=0.2.0
 wandb
 timm
 openmim
+gradio
