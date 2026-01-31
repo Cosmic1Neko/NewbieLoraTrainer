@@ -356,73 +356,42 @@ def setup_lora(model, config):
     use_dora=config['Model'].get('use_dora', False)
     use_rslora=config['Model'].get('use_rslora', False)
     train_norm=config['Model'].get('train_norm', False)
-
-    # 获取目标模块
-    default_target_modules = [
-        "attention.qkv",
-        "attention.out",
-        "feed_forward.w2",
-        "time_text_embed.1",
-        "clip_text_pooled_proj.1",
-    ]
-    
-    target_modules = config['Model'].get('lora_target_modules') or default_target_modules
-
-    lora_config = LoraConfig(
-        r=lora_rank,
-        lora_alpha=lora_alpha,
-        target_modules=target_modules,
-        lora_dropout=lora_dropout,
-        bias="none",
-        task_type=None,
-        use_dora=use_dora,
-        use_rslora=use_rslora,
-    )
-    
-    peft_model = get_peft_model(model, lora_config, low_cpu_mem_usage=False)
-
-    peft_model._adapter_type = "lora"
-    peft_model._adapter_rank = lora_rank
-    peft_model._adapter_alpha = lora_alpha
-
-    # 加载已有的原生 PEFT LoRA 权重 
     resume_lora_path = config['Model'].get('resume_from_lora', None)
+
     if resume_lora_path:
-        logger.info(f"Attempting to load pretrained LoRA from: {resume_lora_path}")
+        peft_model = PeftModel.from_pretrained(model, resume_lora_path, is_trainable=True)
+        logger.info(f"load LoRA weights from {resume_lora_path}")
+    else: 
+        # 获取目标模块
+        default_target_modules = [
+            "attention.qkv",
+            "attention.out",
+            "feed_forward.w2",
+            "time_text_embed.1",
+            "clip_text_pooled_proj.1",
+        ]
         
-        # 路径处理：如果是目录，自动补全文件名
-        load_path = resume_lora_path
-        if os.path.isdir(resume_lora_path):
-            if os.path.exists(os.path.join(resume_lora_path, "adapter_model.safetensors")):
-                load_path = os.path.join(resume_lora_path, "adapter_model.safetensors")
-            elif os.path.exists(os.path.join(resume_lora_path, "adapter_model.bin")):
-                load_path = os.path.join(resume_lora_path, "adapter_model.bin")
+        target_modules = config['Model'].get('lora_target_modules') or default_target_modules
+    
+        lora_config = LoraConfig(
+            r=lora_rank,
+            lora_alpha=lora_alpha,
+            target_modules=target_modules,
+            lora_dropout=lora_dropout,
+            bias="none",
+            task_type=None,
+            use_dora=use_dora,
+            use_rslora=use_rslora,
+        )
         
-        if os.path.exists(load_path) and os.path.isfile(load_path):
-            try:
-                # A. 加载权重字典
-                if load_path.endswith(".safetensors"):
-                    state_dict = load_file(load_path)
-                else:
-                    state_dict = torch.load(load_path, map_location="cpu")
-                
-                # B. 注入权重
-                result = set_peft_model_state_dict(peft_model, state_dict)
-                
-                if result:
-                    if len(result[0]) > 0:
-                        logger.warning(f"Missing keys when loading LoRA: {result[0]}")
-                    if len(result[1]) > 0:
-                        logger.warning(f"Unexpected keys when loading LoRA: {result[1]}")
-                
-                logger.info("Native PEFT LoRA weights loaded successfully.")
-                
-            except Exception as e:
-                logger.error(f"Failed to load LoRA weights from {load_path}: {e}")
-                raise e
-        else:
-            logger.error(f"Resume LoRA path provided but file not found: {load_path}")
-            raise FileNotFoundError(f"LoRA file not found: {load_path}")
+        peft_model = get_peft_model(model, lora_config, low_cpu_mem_usage=False)
+    
+        peft_model._adapter_type = "lora"
+        peft_model._adapter_rank = lora_rank
+        peft_model._adapter_alpha = lora_alpha
+
+        logger.info(f"  Target modules: {target_modules}")
+        logger.info(f"  LoRA rank={lora_rank}, alpha={lora_alpha}")
 
     trainable_params = sum(p.numel() for p in peft_model.parameters() if p.requires_grad)
     total_params = sum(p.numel() for p in peft_model.parameters())
@@ -430,8 +399,6 @@ def setup_lora(model, config):
         f"LoRA applied: {trainable_params/1e6:.2f}M/{total_params/1e6:.2f}M trainable "
         f"({trainable_params/total_params*100:.2f}%)"
     )
-    logger.info(f"  Target modules: {target_modules}")
-    logger.info(f"  LoRA rank={lora_rank}, alpha={lora_alpha}")
 
     return peft_model
 
@@ -592,7 +559,7 @@ def compute_loss(model, vae, text_encoder, tokenizer, clip_model, clip_tokenizer
     return loss
 
 
-def save_checkpoint(accelerator, model, optimizer, scheduler, step, config):
+def save_checkpoint(accelerator, model, optimizer, scheduler, step, config, ema_model=None):
     """Save training checkpoint"""
     checkpoint_dir = os.path.join(config['Model']['output_dir'], "checkpoints")
     os.makedirs(checkpoint_dir, exist_ok=True)
@@ -619,7 +586,7 @@ def save_checkpoint(accelerator, model, optimizer, scheduler, step, config):
     save_lora_model(accelerator, model, config, step, ema_model)
 
 
-def save_lora_model(accelerator, model, config, step=None):
+def save_lora_model(accelerator, model, config, step=None, ema_model=None):
     """Save adapter weights (PEFT format & ComfyUI compatible format)"""
     output_dir = config['Model']['output_dir']
     output_name = config['Model']['output_name']
@@ -674,7 +641,7 @@ def save_lora_model(accelerator, model, config, step=None):
             finally:
                 ema_model.restore(model)
 
-def load_checkpoint(accelerator, model, optimizer, scheduler, config):
+def load_checkpoint(accelerator, model, optimizer, scheduler, config, ema_model=None):
     checkpoint_dir = os.path.join(config['Model']['output_dir'], "checkpoints")
     if not os.path.exists(checkpoint_dir):
         logger.info("No checkpoint found, starting from scratch")
@@ -1139,11 +1106,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
-
-
-
-
-
-
