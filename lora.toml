@@ -13,6 +13,15 @@ output_dir = "/root/autodl-tmp/output"
 # 输出的 LoRA 模型名称（最终保存为 output_dir/output_name/）
 output_name = "NewBieLoRA"
 
+# 是否加载预训练的 LoRA 文件（绝对路径）
+resume_from_lora = "/root/autodl-tmp/output/NewBieLoRA"
+
+# 是否启用 EMA (指数移动平均)
+use_ema = true
+
+# EMA 衰减率 (推荐 0.999 或 0.9999)
+ema_decay = 0.999
+
 # =============================================================================
 # 数据配置
 # =============================================================================
@@ -171,6 +180,7 @@ gradient_clip_norm = 1.0
 
 # FlashAttention-2 优化
 use_flash_attention_2 = true
+
 
 
 
