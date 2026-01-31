@@ -80,7 +80,16 @@ class EMAModel:
         return self.shadow
     
     def load_state_dict(self, state_dict):
-        self.shadow = state_dict
+        for name, p in state_dict.items():
+            if name in self.shadow:
+                self.shadow[name].copy_(p)
+            else:
+                self.shadow[name] = p.clone().detach()
+
+    def to(self, device):
+        for name in self.shadow:
+            self.shadow[name] = self.shadow[name].to(device)
+        return self
 
 def apply_average_pool(latent, factor=4):
     """
