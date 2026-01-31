@@ -41,6 +41,47 @@ except ImportError:
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("newbie_lora_trainer")
 
+class EMAModel:
+    """
+    EMA 模型
+    """
+    def __init__(self, model, decay=0.999):
+        self.decay = decay
+        self.shadow = {}
+        self.backup = {}
+        
+        for name, p in model.named_parameters():
+            if p.requires_grad:
+                self.shadow[name] = p.clone().detach()
+
+    def step(self, model):
+        # 遍历模型的当前参数
+        for name, p in model.named_parameters():
+            if p.requires_grad:
+                if name in self.shadow:
+                    new_average = (1.0 - self.decay) * p.detach() + self.decay * self.shadow[name]
+                    self.shadow[name] = new_average.clone()
+
+    def copy_to(self, model):
+        """将 EMA 权重应用到模型"""
+        for name, p in model.named_parameters():
+            if p.requires_grad and name in self.shadow:
+                self.backup[name] = p.data.clone()
+                p.data.copy_(self.shadow[name].data)
+
+    def restore(self, model):
+        """恢复备份的原始权重"""
+        for name, p in model.named_parameters():
+            if name in self.backup:
+                p.data.copy_(self.backup[name])
+        self.backup = {}
+    
+    def state_dict(self):
+        return self.shadow
+    
+    def load_state_dict(self, state_dict):
+        self.shadow = state_dict
+
 def apply_average_pool(latent, factor=4):
     """
     Apply average pooling to downsample the latent.
@@ -344,6 +385,45 @@ def setup_lora(model, config):
     peft_model._adapter_rank = lora_rank
     peft_model._adapter_alpha = lora_alpha
 
+    # 加载已有的原生 PEFT LoRA 权重 
+    resume_lora_path = config['Model'].get('resume_from_lora', None)
+    if resume_lora_path:
+        logger.info(f"Attempting to load pretrained LoRA from: {resume_lora_path}")
+        
+        # 路径处理：如果是目录，自动补全文件名
+        load_path = resume_lora_path
+        if os.path.isdir(resume_lora_path):
+            if os.path.exists(os.path.join(resume_lora_path, "adapter_model.safetensors")):
+                load_path = os.path.join(resume_lora_path, "adapter_model.safetensors")
+            elif os.path.exists(os.path.join(resume_lora_path, "adapter_model.bin")):
+                load_path = os.path.join(resume_lora_path, "adapter_model.bin")
+        
+        if os.path.exists(load_path) and os.path.isfile(load_path):
+            try:
+                # A. 加载权重字典
+                if load_path.endswith(".safetensors"):
+                    state_dict = load_file(load_path)
+                else:
+                    state_dict = torch.load(load_path, map_location="cpu")
+                
+                # B. 注入权重
+                result = set_peft_model_state_dict(peft_model, state_dict)
+                
+                if result:
+                    if len(result[0]) > 0:
+                        logger.warning(f"Missing keys when loading LoRA: {result[0]}")
+                    if len(result[1]) > 0:
+                        logger.warning(f"Unexpected keys when loading LoRA: {result[1]}")
+                
+                logger.info("Native PEFT LoRA weights loaded successfully.")
+                
+            except Exception as e:
+                logger.error(f"Failed to load LoRA weights from {load_path}: {e}")
+                raise e
+        else:
+            logger.error(f"Resume LoRA path provided but file not found: {load_path}")
+            raise FileNotFoundError(f"LoRA file not found: {load_path}")
+
     trainable_params = sum(p.numel() for p in peft_model.parameters() if p.requires_grad)
     total_params = sum(p.numel() for p in peft_model.parameters())
     logger.info(
@@ -531,9 +611,12 @@ def save_checkpoint(accelerator, model, optimizer, scheduler, step, config):
         "optimizer_state_dict": optimizer.state_dict(),
         "scheduler_state_dict": scheduler.state_dict(),
     }
+    # 保存 EMA 状态
+    if ema_model is not None:
+        checkpoint["ema_state_dict"] = ema_model.state_dict()
     accelerator.save(checkpoint, checkpoint_path)
     logger.info(f"Checkpoint saved: {checkpoint_path}")
-    save_lora_model(accelerator, model, config, step)
+    save_lora_model(accelerator, model, config, step, ema_model)
 
 
 def save_lora_model(accelerator, model, config, step=None):
@@ -542,53 +625,54 @@ def save_lora_model(accelerator, model, config, step=None):
     output_name = config['Model']['output_name']
     os.makedirs(output_dir, exist_ok=True)
 
-    # 1. 准备 PEFT 格式的保存目录 (用于 Resume 或 HuggingFace)
-    save_dir = os.path.join(output_dir, f"{output_name}_step_{step}" if step else output_name)
-    os.makedirs(save_dir, exist_ok=True)
+    def _save_implementation(model_to_save, suffix=""):
+        save_dir = os.path.join(output_dir, f"{output_name}_step_{step}{suffix}" if step else f"{output_name}{suffix}")
+        os.makedirs(save_dir, exist_ok=True)
 
-    unwrapped = accelerator.unwrap_model(model)
-    # 使用 get_peft_model_state_dict 获取仅包含 LoRA 权重的字典
-    lora_state_dict = get_peft_model_state_dict(unwrapped)
+        unwrapped = accelerator.unwrap_model(model_to_save)
+        lora_state_dict = get_peft_model_state_dict(unwrapped)
             
-    if accelerator.is_main_process:
-        # --- A. 保存标准 PEFT 格式 ---
-        unwrapped.save_pretrained(
-            save_dir,
-            is_main_process=accelerator.is_main_process,
-            safe_serialization=True,
-        )
-        logger.info(f"PEFT LoRA model saved to: {save_dir}")
+        if accelerator.is_main_process:
+            # --- A. 保存标准 PEFT 格式 ---
+            unwrapped.save_pretrained(
+                save_dir,
+                is_main_process=accelerator.is_main_process,
+                safe_serialization=True,
+            )
+            logger.info(f"PEFT LoRA model{suffix} saved to: {save_dir}")
 
-        # --- B. 保存 ComfyUI 兼容格式 ---
-        comfy_state_dict = {}
-        for key, value in lora_state_dict.items():
-            # 1. 转换 DoRA Key: lora_magnitude_vector -> dora_scale
-            if key.endswith(".lora_magnitude_vector"):
-                key = key.replace(".lora_magnitude_vector", ".dora_scale")
-                ################## 重要: PEFT中保存的lora_magnitude_vector为一维向量，但ComfyUI期望是二维 ##################
-                if len(value.shape) == 1:
-                    value = value.unsqueeze(1)
-            # 2. 替换前缀: base_model.model. -> diffusion_model.
-            if key.startswith("base_model.model."):
-                key = "diffusion_model." + key[len("base_model.model."):]
-            # 3. 转换 LoRA 键名 (标准 ComfyUI 格式建议使用 lora_down/up)
-            if "lora_A.weight" in key:
-                key = key.replace("lora_A.weight", "lora_down.weight")
-            if "lora_B.weight" in key:
-                key = key.replace("lora_B.weight", "lora_up.weight")
-            comfy_state_dict[key] = value
-        
-        # 构造单文件文件名 (例如: MyLoRA_step_1000.safetensors)
-        if step:
-            comfy_filename = f"{output_name}_step_{step}.safetensors"
-        else:
-            comfy_filename = f"{output_name}.safetensors"
+            # --- B. 保存 ComfyUI 兼容格式 ---
+            comfy_state_dict = {}
+            for key, value in lora_state_dict.items():
+                if key.endswith(".lora_magnitude_vector"):
+                    key = key.replace(".lora_magnitude_vector", ".dora_scale")
+                    if len(value.shape) == 1:
+                        value = value.unsqueeze(1)
+                if key.startswith("base_model.model."):
+                    key = "diffusion_model." + key[len("base_model.model."):]
+                if "lora_A.weight" in key:
+                    key = key.replace("lora_A.weight", "lora_down.weight")
+                if "lora_B.weight" in key:
+                    key = key.replace("lora_B.weight", "lora_up.weight")
+                comfy_state_dict[key] = value
             
-        comfy_path = os.path.join(output_dir, comfy_filename)
-        
-        # 保存 ComfyUI 专用文件
-        save_file(comfy_state_dict, comfy_path)
-        logger.info(f"ComfyUI compatible LoRA saved to: {comfy_path}")
+            comfy_filename = f"{output_name}_step_{step}{suffix}.safetensors" if step else f"{output_name}{suffix}.safetensors"
+            comfy_path = os.path.join(output_dir, comfy_filename)
+            save_file(comfy_state_dict, comfy_path)
+            logger.info(f"ComfyUI compatible LoRA{suffix} saved to: {comfy_path}")
+
+        # 1. 保存普通模型
+        _save_implementation(model, suffix="")
+
+        # 2. 保存 EMA 模型 (如果有)
+        if ema_model is not None:
+            logger.info("Saving EMA weights...")
+            # 切换权重 -> 保存 -> 恢复权重
+            ema_model.copy_to(model)
+            try:
+                _save_implementation(model, suffix="_ema")
+            finally:
+                ema_model.restore(model)
 
 def load_checkpoint(accelerator, model, optimizer, scheduler, config):
     checkpoint_dir = os.path.join(config['Model']['output_dir'], "checkpoints")
@@ -616,6 +700,13 @@ def load_checkpoint(accelerator, model, optimizer, scheduler, config):
         logger.info("Loaded PEFT LoRA state dict from checkpoint")
     optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
     scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
+    # 恢复 EMA 状态
+    if ema_model is not None:
+        if "ema_state_dict" in checkpoint:
+            ema_model.load_state_dict(checkpoint["ema_state_dict"])
+            logger.info("Loaded EMA state from checkpoint")
+        else:
+            logger.warning("EMA enabled but no EMA state found in checkpoint!")
     logger.info(f"Resumed from step {checkpoint['step']}")
     return checkpoint["step"]
 
@@ -853,6 +944,15 @@ def main():
     else:
         model, optimizer, scheduler, train_dataloader = accelerator.prepare(model, optimizer, scheduler, train_dataloader)
     print_memory_usage("After accelerator.prepare", args.profiler)
+
+    # 初始化 EMA
+    ema_model = None
+    if config['Model'].get('use_ema', False):
+        ema_decay = config['Model'].get('ema_decay', 0.999)
+        if accelerator.is_main_process:
+            logger.info(f"Initializing EMA with decay: {ema_decay}")
+            # 注意：unwrap_model 很重要，否则参数名可能不匹配
+            ema_model = EMAModel(accelerator.unwrap_model(model), decay=ema_decay)
     
     """
     # Do NOT prepare encoders - they should stay frozen and not be wrapped
@@ -881,7 +981,7 @@ def main():
         vae.eval()
         vae.requires_grad_(False)
 
-    start_step = load_checkpoint(accelerator, model, optimizer, scheduler, config)
+    start_step = load_checkpoint(accelerator, model, optimizer, scheduler, config, ema_model)
 
     if args.profiler:
         get_tensors_summary(args.profiler)
@@ -985,6 +1085,9 @@ def main():
                     scheduler.step()
                     optimizer.zero_grad()
 
+                    if ema_model is not None:
+                         ema_model.step(accelerator.unwrap_model(model))
+
                     # ================= Profiler: After Optimizer & Exit =================
                     # 仅在第一个完整的 Update Step 结束后执行
                     if is_profiling_step:
@@ -1016,17 +1119,17 @@ def main():
                     logger.info(f"Epoch {epoch+1}/{config['Model']['num_epochs']}, Step {global_step}/{num_training_steps}, Loss {loss.item():.4f}, LR {scheduler.get_last_lr()[0]:.7f}, Speed {steps_per_sec:.2f} steps/s")
 
                 if global_step % 1000 == 0:
-                    save_checkpoint(accelerator, model, optimizer, scheduler, global_step, config)
+                    save_checkpoint(accelerator, model, optimizer, scheduler, global_step, config, ema_model)
 
         avg_epoch_loss = sum(epoch_losses) / len(epoch_losses) if epoch_losses else 0.0
         logger.info(f"Epoch {epoch+1}/{config['Model']['num_epochs']} completed - Average Loss: {avg_epoch_loss:.4f}")
 
         if save_epochs_interval == 0 or (epoch + 1) % save_epochs_interval == 0:
-            save_checkpoint(accelerator, model, optimizer, scheduler, global_step, config)
+            save_checkpoint(accelerator, model, optimizer, scheduler, global_step, config, ema_model)
             logger.info(f"Checkpoint saved at epoch {epoch+1}")
 
     logger.info("Training complete, saving final model")
-    save_lora_model(accelerator, model, config)
+    save_lora_model(accelerator, model, config, step=None, ema_model=ema_model)
 
     if accelerator.is_main_process:
         accelerator.end_training()
@@ -1036,6 +1139,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
