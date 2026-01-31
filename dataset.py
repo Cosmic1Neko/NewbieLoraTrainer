@@ -578,37 +578,56 @@ class DPODataset(Dataset):
         #   },
         #   ...
         # ]
-        # 加载单一的 JSON 数据集
+        self.caption_dropout_rate = caption_dropout_rate
+        self.real_ratio = real_ratio
+
+        # 加载 JSON
         with open(preference_json_path, 'r', encoding='utf-8') as f:
             raw_data = json.load(f)
-        # 过滤掉被标记为 discarded 的数据
+        
         self.all_data = [
             item for item in raw_data
             if item.get("annotation_status") in ["swapped", "confirmed"]
         ]
-        # 筛选出有效的偏好对数据
-        # 必须包含 dpo_pair 且其中有 chosen 和 rejected 路径
+        
         self.preference_data = [
             item for item in self.all_data 
             if item.get("dpo_pair") and item.get("dpo_pair", {}).get("chosen") and item.get("dpo_pair", {}).get("rejected")
         ]
-        # 筛选出可用于正则化的数据
+        
         self.real_reg_data = [
             item for item in self.preference_data
             if item.get("real_image_path") and item.get("generated_image_paths")
         ]
         
         print(f"Dataset loaded from {preference_json_path}")
-        print(f"  - Total Loaded: {len(raw_data)}")
-        print(f"  - After Filtering 'rejected': {len(self.all_data)}")
         print(f"  - Valid Preference Pairs (DPO): {len(self.preference_data)}")
-        print(f"  - Valid Real Regularization Pairs: {len(self.real_reg_data)}")
         
-        if len(self.preference_data) == 0:
-            print("Warning: No valid preference pairs found (checked 'dpo_pair' field). DPO training might fail.")
+        # 构建 Bucket 索引
+        # 1. 为 preference_data 构建 bucket_to_indices，用于 BatchSampler
+        self.bucket_to_indices = {}
+        for idx, item in enumerate(self.preference_data):
+            # 默认分辨率防错，JSON 中 resolution 格式为 [w, h]
+            res_list = item.get("resolution", [1024, 1024])
+            res = (res_list[0], res_list[1]) 
+            
+            if res not in self.bucket_to_indices:
+                self.bucket_to_indices[res] = []
+            self.bucket_to_indices[res].append(idx)
+
+        # 2. 为 real_reg_data 构建按分辨率索引的字典，用于 __getitem__ 中混入数据时匹配分辨率
+        self.real_data_by_reso = {}
+        for item in self.real_reg_data:
+            res_list = item.get("resolution", [1024, 1024])
+            res = (res_list[0], res_list[1])
+            
+            if res not in self.real_data_by_reso:
+                self.real_data_by_reso[res] = []
+            self.real_data_by_reso[res].append(item)
+
+        logger.info(f"DPO Buckets found: {list(self.bucket_to_indices.keys())}")
 
     def __len__(self):
-        # 长度定义为偏好数据集的长度，混合逻辑在 __getitem__ 动态处理
         return len(self.preference_data)
 
     def load_image(self, path, target_height, target_width):
@@ -620,11 +639,9 @@ class DPODataset(Dataset):
         orig_ratio = orig_w / orig_h
             
         if orig_ratio > bucket_ratio:
-            # 原图更宽，以高度为基准缩放
             resize_height = target_height
             resize_width = int(resize_height * orig_ratio)
         else:
-            # 原图更窄，以宽度为基准缩放
             resize_width = target_width
             resize_height = int(resize_width / orig_ratio)
                 
@@ -637,17 +654,21 @@ class DPODataset(Dataset):
             
         return transform(image)
 
-    def _get_real_pair(self):
-        """从真实vs生成数据集中采样，处理生成图片列表"""
-        if not self.real_reg_data:
-            return None, None, ""
+    def _get_real_pair(self, target_resolution):
+        """从真实vs生成数据集中采样"""
+        # 如果当前分辨率下没有可用的真实数据，返回 None
+        if target_resolution not in self.real_data_by_reso:
+            return None, None, None, None, None
+            
+        candidates = self.real_data_by_reso[target_resolution]
+        if not candidates:
+            return None, None, None, None, None
         
-        item = random.choice(self.real_reg_data)
-        target_width, target_height = item.get("resolution")[0], item.get("resolution")[1]
+        item = random.choice(candidates)
+        target_width, target_height = target_resolution
         
         # 1. 获取 Chosen (Real)
         chosen_path = item.get("real_image_path")
-        
         # 2. 获取 Rejected (Generated)
         # offline_dataset.py 可能会生成 num_samples > 1，所以 generated 可能是列表
         gen_candidates = item.get("generated_image_paths")
@@ -679,22 +700,33 @@ class DPODataset(Dataset):
         return chosen_path, rejected_path, caption, target_width, target_height
 
     def __getitem__(self, idx):
-        # 策略：按比例混合真实数据与偏好数据
-        # 如果 real_ratio > 0，则有概率采样 Real vs Gen 数据作为正则项
+        # 1. 确定当前样本的目标分辨率 (由 preference_data 决定，Sampler 会保证同一个 Batch 的 idx 都在同一分辨率)
+        base_item = self.preference_data[idx]
+        w, h = base_item.get("resolution", [1024, 1024])
+        target_reso = (w, h)
+        
         use_real_regularization = (
             self.real_ratio > 0 
-            and len(self.real_reg_data) > 0 
             and random.random() < self.real_ratio
         )
 
+        chosen_path, rejected_path, caption, target_width, target_height = None, None, None, None, None
+
         if use_real_regularization:
-            chosen_path, rejected_path, caption, target_width, target_height = self._get_real_pair()
-        else:
+            chosen_path, rejected_path, caption, target_width, target_height = self._get_real_pair(target_reso)
+        # 如果没有启用 real regularization 或者 找不到同分辨率的 real data，回退到 DPO 数据
+        if chosen_path is None:
             chosen_path, rejected_path, caption, target_width, target_height = self._get_preference_pair(idx)
 
         # 加载图片
-        chosen_img = self.load_image(chosen_path, target_height, target_width)
-        rejected_img = self.load_image(rejected_path, target_height, target_width)
+        try:
+            chosen_img = self.load_image(chosen_path, target_height, target_width)
+            rejected_img = self.load_image(rejected_path, target_height, target_width)
+        except Exception as e:
+            logger.error(f"Error loading images for idx {idx}: {e}")
+            # 发生错误时生成全黑图防止崩坏
+            chosen_img = torch.zeros((3, target_height, target_width))
+            rejected_img = torch.zeros((3, target_height, target_width))
 
         # Caption Dropout (维持 CFG 能力)
         if random.random() < self.caption_dropout_rate:
@@ -705,3 +737,68 @@ class DPODataset(Dataset):
             "pixel_values_rejected": rejected_img,
             "caption": caption
         }
+
+class DPOBucketBatchSampler(Sampler):
+    def __init__(self, dataset, batch_size, shuffle=True, seed=42, num_replicas=1, rank=0):
+        self.dataset = dataset
+        self.batch_size = batch_size
+        self.shuffle = shuffle
+        self.seed = seed
+        self.num_replicas = num_replicas
+        self.rank = rank
+        self.epoch = 0
+        
+        # 直接从 DPODataset 中获取 bucket_to_indices
+        # 结构: {(w, h): [idx1, idx2, ...]}
+        self.bucket_to_indices = dataset.bucket_to_indices
+
+    def __iter__(self):
+        g = torch.Generator()
+        g.manual_seed(self.seed + self.epoch)
+
+        bucket_batches = []
+
+        # 对每个 Bucket 生成 Batch
+        for resolution, indices in self.bucket_to_indices.items():
+            indices = np.array(indices)
+            if self.shuffle:
+                # 使用 numpy 或 torch shuffle
+                indices_perm = torch.randperm(len(indices), generator=g).tolist()
+                indices = indices[indices_perm]
+            else:
+                indices = indices.tolist()
+
+            # 切分 batch
+            for i in range(0, len(indices), self.batch_size):
+                batch = indices[i : i + self.batch_size]
+                # 只有当 batch 填满或者是最后一个 bucket 时才保留? 
+                # 这里我们保留所有，collate_fn 会处理
+                # 为了防止 Drop Last 导致数据浪费，这里保留所有片段
+                bucket_batches.append(batch)
+
+        # 对所有生成的 batch 进行 shuffle (打乱 bucket 顺序)
+        if self.shuffle:
+            batch_perm = torch.randperm(len(bucket_batches), generator=g).tolist()
+            bucket_batches = [bucket_batches[i] for i in batch_perm]
+
+        # 分布式采样处理 (DDP)
+        # 简单的分配策略：按 Rank 间隔取样
+        # 注意：这可能会导致某些 GPU 的 batch 数略少于其他 GPU
+        # 为了严格对齐，通常会丢弃最后几个无法整除的 batch
+        
+        num_batches = len(bucket_batches)
+        # 保证总 batch 数能被 replicas 整除 (丢弃多余的)
+        num_batches = (num_batches // self.num_replicas) * self.num_replicas
+        bucket_batches = bucket_batches[:num_batches]
+        
+        # 取当前进程的分片
+        indices_iter = bucket_batches[self.rank :: self.num_replicas]
+        
+        return iter(indices_iter)
+
+    def __len__(self):
+        total_batches = sum(math.ceil(len(idx) / self.batch_size) for idx in self.bucket_to_indices.values())
+        return total_batches // self.num_replicas
+
+    def set_epoch(self, epoch):
+        self.epoch = epoch
