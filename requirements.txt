@@ -1,5 +1,5 @@
 diffusers>=0.27.0
-transformers>=4.38.0
+transformers>=4.38.0,<4.57.3
 peft>=0.8.2
 accelerate>=0.27.0
 safetensors>=0.4.0  
@@ -9,4 +9,5 @@ toml>=0.10.2
 Pillow>=10.2.0
 huggingface-hub>=0.20.0
 torchdiffeq>=0.2.0
+
 timm
