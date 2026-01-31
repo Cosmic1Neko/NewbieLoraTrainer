@@ -671,6 +671,7 @@ def load_checkpoint(accelerator, model, optimizer, scheduler, config, ema_model=
     if ema_model is not None:
         if "ema_state_dict" in checkpoint:
             ema_model.load_state_dict(checkpoint["ema_state_dict"])
+            ema_model.to(accelerator.device)
             logger.info("Loaded EMA state from checkpoint")
         else:
             logger.warning("EMA enabled but no EMA state found in checkpoint!")
