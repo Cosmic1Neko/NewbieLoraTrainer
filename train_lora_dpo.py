@@ -304,7 +304,7 @@ def main():
         #seq_len=seq_len
     )
     logger.info(f"Rectified Flow transport created.")
-
+    
     # 数据加载
     batch_size = config['Model']['train_batch_size']
     train_dataset = DPODataset(
@@ -312,11 +312,17 @@ def main():
         caption_dropout_rate=config['Model'].get('caption_dropout_rate', 0.1), 
         real_ratio=config['Model'].get('real_ratio', 0.2), 
     )
-
-    train_dataloader = DataLoader(
+    bucket_sampler = DPOBucketBatchSampler(
         train_dataset,
         batch_size=batch_size,
         shuffle=True,
+        seed=42,
+        num_replicas=accelerator.num_processes,
+        rank=accelerator.process_index
+    )
+    train_dataloader = DataLoader(
+        train_dataset,
+        batch_sampler=bucket_sampler,
         collate_fn=collate_fn,
         num_workers=config['Model'].get('dataloader_num_workers', 4)
     )
