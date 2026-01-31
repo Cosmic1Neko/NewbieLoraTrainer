@@ -738,7 +738,7 @@ class DPODataset(Dataset):
             "caption": caption
         }
 
-class DPOBucketBatchSampler(Sampler):
+class DPOBucketBatchSampler(BucketBatchSampler):
     def __init__(self, dataset, batch_size, shuffle=True, seed=42, num_replicas=1, rank=0):
         self.dataset = dataset
         self.batch_size = batch_size
