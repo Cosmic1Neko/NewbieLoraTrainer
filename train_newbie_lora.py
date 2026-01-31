@@ -628,18 +628,18 @@ def save_lora_model(accelerator, model, config, step=None, ema_model=None):
             save_file(comfy_state_dict, comfy_path)
             logger.info(f"ComfyUI compatible LoRA{suffix} saved to: {comfy_path}")
 
-        # 1. 保存普通模型
-        _save_implementation(model, suffix="")
+    # 1. 保存普通模型
+    _save_implementation(model, suffix="")
 
-        # 2. 保存 EMA 模型 (如果有)
-        if ema_model is not None:
-            logger.info("Saving EMA weights...")
-            # 切换权重 -> 保存 -> 恢复权重
-            ema_model.copy_to(model)
-            try:
-                _save_implementation(model, suffix="_ema")
-            finally:
-                ema_model.restore(model)
+    # 2. 保存 EMA 模型 (如果有)
+    if ema_model is not None:
+        logger.info("Saving EMA weights...")
+        # 切换权重 -> 保存 -> 恢复权重
+        ema_model.copy_to(model)
+        try:
+            _save_implementation(model, suffix="_ema")
+        finally:
+            ema_model.restore(model)
 
 def load_checkpoint(accelerator, model, optimizer, scheduler, config, ema_model=None):
     checkpoint_dir = os.path.join(config['Model']['output_dir'], "checkpoints")
@@ -1053,7 +1053,7 @@ def main():
                     optimizer.zero_grad()
 
                     if ema_model is not None:
-                         ema_model.step(accelerator.unwrap_model(model))
+                        ema_model.step(accelerator.unwrap_model(model))
 
                     # ================= Profiler: After Optimizer & Exit =================
                     # 仅在第一个完整的 Update Step 结束后执行
