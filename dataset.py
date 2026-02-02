@@ -566,8 +566,7 @@ class DPODataset(Dataset):
         self.use_cache = use_cache
         self.vae = vae
         self.device = device
-        self.dtype = dtype
-
+        
         # 加载偏好对数据
         # 预期格式示例: 
         # [
@@ -738,16 +737,14 @@ class DPODataset(Dataset):
 
     def _get_real_pair(self, target_resolution):
         """从真实vs生成数据集中采样"""
-        # 如果当前分辨率下没有可用的真实数据，返回 None
         if target_resolution not in self.real_data_by_reso:
-            return None, None, None, None, None
+            return None, None, None
             
         candidates = self.real_data_by_reso[target_resolution]
         if not candidates:
-            return None, None, None, None, None
+            return None, None, None
         
         item = random.choice(candidates)
-        target_width, target_height = target_resolution
         
         # 1. 获取 Chosen (Real)
         chosen_path = item.get("real_image_path")
@@ -763,12 +760,11 @@ class DPODataset(Dataset):
             rejected_path = gen_candidates
             
         caption = item.get("caption", "")
-        return chosen_path, rejected_path, caption, target_width, target_height
+        return chosen_path, rejected_path, caption
 
     def _get_preference_pair(self, idx):
         """从偏好数据集中获取 (DPO Target)"""
         item = self.preference_data[idx]
-        target_width, target_height = item.get("resolution")[0], item.get("resolution")[1]
         
         # 直接读取 dpo_pair 结构
         dpo_pair = item.get("dpo_pair", {})
@@ -779,22 +775,22 @@ class DPODataset(Dataset):
         if item.get("annotation_status") == "swapped":
             chosen_path, rejected_path = rejected_path, chosen_path
         
-        return chosen_path, rejected_path, caption, target_width, target_height
+        return chosen_path, rejected_path, caption
 
     def __getitem__(self, idx):
         # 1. 确定当前样本的目标分辨率 (由 preference_data 决定，保证同一个 Batch 的 idx 都在同一分辨率)
         base_item = self.preference_data[idx]
-        w, h = base_item.get("resolution", [1024, 1024])
-        target_reso = (w, h)
+        target_w, target_h = base_item.get("resolution", [1024, 1024])
+        target_reso = (target_w, target_h)
         
         use_real_regularization = (self.real_ratio > 0 and random.random() < self.real_ratio)
 
         chosen_path, rejected_path, caption= None, None, None
 
         if use_real_regularization:
-            chosen_path, rejected_path, caption, _, _ = self._get_real_pair(target_reso)
+            chosen_path, rejected_path, caption = self._get_real_pair(target_reso)
         if chosen_path is None:
-            chosen_path, rejected_path, caption, _, _ = self._get_preference_pair(idx)
+            chosen_path, rejected_path, caption = self._get_preference_pair(idx)
         # Caption Dropout
         if random.random() < self.caption_dropout_rate:
             caption = ""
@@ -816,12 +812,12 @@ class DPODataset(Dataset):
                 return {"latents_chosen": dummy, "latents_rejected": dummy, "caption": "", "cached": True}
         else:
             try:
-                chosen_img = self.load_image(chosen_path, h, w)
-                rejected_img = self.load_image(rejected_path, h, w)
+                chosen_img = self.load_image(chosen_path, target_h, target_w)
+                rejected_img = self.load_image(rejected_path, target_h, target_w)
             except Exception as e:
                 logger.error(f"Error loading images for idx {idx}: {e}")
-                chosen_img = torch.zeros((3, h, w))
-                rejected_img = torch.zeros((3, h, w))
+                chosen_img = torch.zeros((3, target_h, target_w)
+                rejected_img = torch.zeros((3, target_h, target_w))
 
             return {
                 "pixel_values_chosen": chosen_img,
