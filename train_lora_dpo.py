@@ -238,7 +238,6 @@ def main():
         use_cache=use_cache, 
         vae=vae,
         device=accelerator.device,
-        dtype=torch.float32
     )
     if use_cache:
         print("Cache generation complete. Unloading VAE from memory.")
