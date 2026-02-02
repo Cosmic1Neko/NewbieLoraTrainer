@@ -643,12 +643,12 @@ def save_lora_model(accelerator, model, config, step=None, ema_model=None):
     # 2. 保存 EMA 模型 (如果有)
     if ema_model is not None:
         logger.info("Saving EMA weights...")
-        # 切换权重 -> 保存 -> 恢复权重
-        ema_model.copy_to(model)
+        unwrapped_model = accelerator.unwrap_model(model)
+        ema_model.copy_to(unwrapped_model)
         try:
             _save_implementation(model, suffix="_ema")
         finally:
-            ema_model.restore(model)
+            ema_model.restore(unwrapped_model)
 
 def load_checkpoint(accelerator, model, optimizer, scheduler, config, ema_model=None):
     checkpoint_dir = os.path.join(config['Model']['output_dir'], "checkpoints")
@@ -928,7 +928,6 @@ def main():
         ema_decay = config['Model'].get('ema_decay', 0.999)
         if accelerator.is_main_process:
             logger.info(f"Initializing EMA with decay: {ema_decay}")
-            # 注意：unwrap_model 很重要，否则参数名可能不匹配
             ema_model = EMAModel(accelerator.unwrap_model(model), decay=ema_decay)
     
     """
