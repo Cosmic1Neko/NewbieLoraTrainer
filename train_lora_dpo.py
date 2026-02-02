@@ -78,7 +78,16 @@ class EMAModel:
         return self.shadow
     
     def load_state_dict(self, state_dict):
-        self.shadow = state_dict
+        for name, p in state_dict.items():
+            if name in self.shadow:
+                self.shadow[name].copy_(p)
+            else:
+                self.shadow[name] = p.clone().detach()
+
+    def to(self, device):
+        for name in self.shadow:
+            self.shadow[name] = self.shadow[name].to(device)
+        return self
 
 def collate_fn(batch):
     pixel_values_chosen = torch.stack([item["pixel_values_chosen"] for item in batch])
