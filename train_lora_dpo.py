@@ -48,30 +48,48 @@ except ImportError:
 logger = get_logger(__name__)
 
 def collate_fn(batch):
-    pixel_values_chosen = torch.stack([item["pixel_values_chosen"] for item in batch])
-    pixel_values_rejected = torch.stack([item["pixel_values_rejected"] for item in batch])
-    captions = [item["caption"] for item in batch]
-    
-    return {
-        "pixel_values_chosen": pixel_values_chosen,
-        "pixel_values_rejected": pixel_values_rejected,
-        "captions": captions
-    }
+    if batch[0].get("cached", False):
+        latents_chosen = torch.stack([item["latents_chosen"] for item in batch])
+        latents_rejected = torch.stack([item["latents_rejected"] for item in batch])
+        captions = [item["caption"] for item in batch]
+        return {
+            "latents_chosen": latents_chosen,
+            "latents_rejected": latents_rejected,
+            "captions": captions,
+            "cached": True
+        }
+    else:
+        pixel_values_chosen = torch.stack([item["pixel_values_chosen"] for item in batch])
+        pixel_values_rejected = torch.stack([item["pixel_values_rejected"] for item in batch])
+        captions = [item["caption"] for item in batch]
+
+        return {
+            "pixel_values_chosen": pixel_values_chosen,
+            "pixel_values_rejected": pixel_values_rejected,
+            "captions": captions,
+            "cached": False
+        }
 
 def compute_loss(model, ref_model, vae, text_encoder, tokenizer, clip_model, clip_tokenizer, transport, batch, device, gemma3_prompt="", beta=1000.0, mu=0.0, dmpo_alpha=0.0):
-    pixel_values_chosen = batch["pixel_values_chosen"].to(device)
-    pixel_values_rejected = batch["pixel_values_rejected"].to(device)
     captions = batch["captions"]
-    batch_size = pixel_values_chosen.shape[0]
-    scaling_factor = getattr(vae.config, 'scaling_factor', 0.3611)
-    shift_factor = getattr(vae.config, 'shift_factor', 0.1159)
+
+    if batch.get("cached", False):
+        latents_chosen = batch["latents_chosen"].to(device)
+        latents_rejected = batch["latents_rejected"].to(device)
+    else:
+        pixel_values_chosen = batch["pixel_values_chosen"].to(device)
+        pixel_values_rejected = batch["pixel_values_rejected"].to(device)
+
+        scaling_factor = getattr(vae.config, 'scaling_factor', 0.3611)
+        shift_factor = getattr(vae.config, 'shift_factor', 0.1159)
+
+        with torch.no_grad():
+            latents_chosen = vae.encode(pixel_values_chosen).latent_dist.mode()
+            latents_chosen = (latents_chosen - shift_factor) * scaling_factor
+            latents_rejected = vae.encode(pixel_values_rejected).latent_dist.mode()
+            latents_rejected = (latents_rejected - shift_factor) * scaling_factor
 
     with torch.no_grad():
-        latents_chosen = vae.encode(pixel_values_chosen).latent_dist.mode()
-        latents_chosen = (latents_chosen - shift_factor) * scaling_factor
-        latents_rejected = vae.encode(pixel_values_rejected).latent_dist.mode()
-        latents_rejected = (latents_rejected - shift_factor) * scaling_factor
-        
         # Gemma 编码
         gemma_texts = [(gemma3_prompt + cap) if (gemma3_prompt and cap) else cap for cap in captions]
         gemma_inputs = tokenizer(
@@ -81,7 +99,7 @@ def compute_loss(model, ref_model, vae, text_encoder, tokenizer, clip_model, cli
         gemma_outputs = text_encoder(**gemma_inputs, output_hidden_states=True)
         cap_feats = gemma_outputs.hidden_states[-2]
         cap_mask = gemma_inputs.attention_mask
-        
+
         # CLIP 编码
         clip_inputs = clip_tokenizer(
             captions, padding=True, truncation=True,
@@ -93,9 +111,8 @@ def compute_loss(model, ref_model, vae, text_encoder, tokenizer, clip_model, cli
 
     ############ 损失计算 ############
     loss = transport.training_dpo_losses(model, ref_model, latents_chosen, latents_rejected, beta, mu, dmpo_alpha, model_kwargs)["loss"].mean()
-    
+
     return loss
-)
 
 class ReferenceModelWrapper(torch.nn.Module):
     """
@@ -181,6 +198,10 @@ def main():
     # 加载模型
     model, vae, text_encoder, tokenizer, clip_model, clip_tokenizer = load_model_and_tokenizer(config)
 
+    use_cache = config['Model'].get('use_cache', False)
+    if use_cache and vae is not None:
+        vae = vae.to(accelerator.device)
+
     # 应用 LoRA
     sft_lora_path = config['Model'].get('sft_lora_path', "")
     try:
@@ -214,7 +235,18 @@ def main():
         preference_json_path=config['Model']['preference_json'],
         caption_dropout_rate=config['Model'].get('caption_dropout_rate', 0.1), 
         real_ratio=config['Model'].get('real_ratio', 0.2), 
+        use_cache=use_cache, 
+        vae=vae,
+        device=accelerator.device,
+        dtype=torch.float32
     )
+    if use_cache:
+        print("Cache generation complete. Unloading VAE from memory.")
+        del vae
+        import gc
+        gc.collect()
+        torch.cuda.empty_cache()
+        vae = None
     bucket_sampler = DPOBucketBatchSampler(
         train_dataset,
         batch_size=batch_size,
