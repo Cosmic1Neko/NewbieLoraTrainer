@@ -29,8 +29,16 @@ from peft import LoraConfig, get_peft_model, PeftModel, get_peft_model_state_dic
 from safetensors.torch import load_file, save_file
 
 import models
-from dataset import DPODataset
-from train_newbie_lora import load_model_and_tokenizer, setup_scheduler, setup_optimizer, save_checkpoint, save_lora_model, load_checkpoint
+from dataset import DPODataset, DPOBucketBatchSampler
+from train_newbie_lora import (
+    load_model_and_tokenizer,
+    setup_scheduler,
+    setup_optimizer,
+    save_checkpoint,
+    save_lora_model,
+    load_checkpoint,
+    EMAModel
+)
 from transport import create_transport
 try:
     import bitsandbytes as bnb
@@ -38,56 +46,6 @@ except ImportError:
     logging.warning("bitsandbytes not available, 8-bit optimizer disabled")
 
 logger = get_logger(__name__)
-
-class EMAModel:
-    """
-    EMA 模型
-    """
-    def __init__(self, model, decay=0.999):
-        self.decay = decay
-        self.shadow = {}
-        self.backup = {}
-        
-        for name, p in model.named_parameters():
-            if p.requires_grad:
-                self.shadow[name] = p.clone().detach()
-
-    def step(self, model):
-        # 遍历模型的当前参数
-        for name, p in model.named_parameters():
-            if p.requires_grad:
-                if name in self.shadow:
-                    new_average = (1.0 - self.decay) * p.detach() + self.decay * self.shadow[name]
-                    self.shadow[name] = new_average.clone()
-
-    def copy_to(self, model):
-        """将 EMA 权重应用到模型"""
-        for name, p in model.named_parameters():
-            if p.requires_grad and name in self.shadow:
-                self.backup[name] = p.data.clone()
-                p.data.copy_(self.shadow[name].data)
-
-    def restore(self, model):
-        """恢复备份的原始权重"""
-        for name, p in model.named_parameters():
-            if name in self.backup:
-                p.data.copy_(self.backup[name])
-        self.backup = {}
-    
-    def state_dict(self):
-        return self.shadow
-    
-    def load_state_dict(self, state_dict):
-        for name, p in state_dict.items():
-            if name in self.shadow:
-                self.shadow[name].copy_(p)
-            else:
-                self.shadow[name] = p.clone().detach()
-
-    def to(self, device):
-        for name in self.shadow:
-            self.shadow[name] = self.shadow[name].to(device)
-        return self
 
 def collate_fn(batch):
     pixel_values_chosen = torch.stack([item["pixel_values_chosen"] for item in batch])
@@ -137,71 +95,7 @@ def compute_loss(model, ref_model, vae, text_encoder, tokenizer, clip_model, cli
     loss = transport.training_dpo_losses(model, ref_model, latents_chosen, latents_rejected, beta, mu, dmpo_alpha, model_kwargs)["loss"].mean()
     
     return loss
-
-def save_ema_lora_model(accelerator, model, ema_model, config, step=None):
-    """
-    保存 EMA 模型的 LoRA 权重
-    1. 保存用于 Resume 的原始 EMA 状态 (.pt 文件)。
-    2. 将 EMA 权重临时应用到模型上。
-    3. 提取并转换权重为 ComfyUI 格式 (.safetensors 文件)。
-    4. 恢复原始模型权重。
-    """
-    # 获取输出路径
-    output_dir = config['Model']['output_dir']
-    output_name = config['Model']['output_name']
-    
-    # 仅在主进程执行保存
-    if accelerator.is_main_process:
-        os.makedirs(output_dir, exist_ok=True)
-        step_suffix = f"_step_{step}" if step is not None else ""
-        checkpoint_dir = os.path.join(output_dir, "checkpoints")
-        os.makedirs(checkpoint_dir, exist_ok=True)
-        
-        resume_filename = f"ema_weights{step_suffix}.pt"
-        resume_path = os.path.join(checkpoint_dir, resume_filename)
-        
-        # 直接保存 EMA 模型的内部状态 (self.shadow)
-        torch.save(ema_model.state_dict(), resume_path)
-
-    # 保存用于推理的 ComfyUI 格式 (.safetensors)
-    ema_model.copy_to(model)
-    
-    try:
-        if accelerator.is_main_process:
-            unwrapped = accelerator.unwrap_model(model)
-            lora_state_dict = get_peft_model_state_dict(unwrapped)
-            comfy_state_dict = {}
-            
-            for key, value in lora_state_dict.items():
-                # A. 转换 DoRA (如果有)
-                if key.endswith(".lora_magnitude_vector"):
-                    key = key.replace(".lora_magnitude_vector", ".dora_scale")
-                    if len(value.shape) == 1:
-                        value = value.unsqueeze(1)
-                
-                # B. 替换前缀 (适配 Diffusers -> ComfyUI)
-                if key.startswith("base_model.model."):
-                    key = "diffusion_model." + key[len("base_model.model."):]
-                
-                # C. 转换 LoRA 键名 (lora_A/B -> lora_down/up)
-                if "lora_A.weight" in key:
-                    key = key.replace("lora_A.weight", "lora_down.weight")
-                elif "lora_B.weight" in key:
-                    key = key.replace("lora_B.weight", "lora_up.weight")
-                
-                comfy_state_dict[key] = value
-            
-            # 构造 ComfyUI 文件名
-            comfy_filename = f"{output_name}_ema{step_suffix}.safetensors"
-            comfy_path = os.path.join(output_dir, comfy_filename)
-            
-            # 保存单文件
-            save_file(comfy_state_dict, comfy_path)
-            logger.info(f"ComfyUI compatible EMA LoRA saved to: {comfy_path}")
-
-    finally:
-        # 3. 恢复原始权重，确保不影响后续训练
-        ema_model.restore(model)
+)
 
 class ReferenceModelWrapper(torch.nn.Module):
     """
@@ -336,7 +230,7 @@ def main():
         num_workers=config['Model'].get('dataloader_num_workers', 4)
     )
 
-     # 优化器与调度器
+    # 优化器与调度器
     optimizer = setup_optimizer(model, config)
     scheduler, num_training_steps = setup_scheduler(optimizer, config, train_dataloader)
 
@@ -353,6 +247,7 @@ def main():
     # accelerator准备模型
     model, optimizer, scheduler = accelerator.prepare(model, optimizer, scheduler)
     ref_model = ReferenceModelWrapper(model, accelerator)
+    
     if text_encoder is not None:
         text_encoder = text_encoder.to(accelerator.device)
         text_encoder.eval()
@@ -367,20 +262,10 @@ def main():
         vae.requires_grad_(False)
 
     # 训练检查点
-    start_step = load_checkpoint(accelerator, model, optimizer, scheduler, config)
-    if start_step > 0 and ema_model is not None:
-        ema_path = os.path.join(config['Model']['output_dir'], "checkpoint/ema_weights.pt")
-        
-        if os.path.exists(ema_path):
-            try:
-                ema_state = torch.load(ema_path, map_location=accelerator.device)
-                ema_model.load_state_dict(ema_state)
-                logger.info(f"Successfully resumed EMA weights from {ema_path}")
-            except Exception as e:
-                logger.warning(f"Failed to load EMA weights: {e}")
-                raise
-        else:
-            logger.warning(f"Resuming training but EMA weights file not found at {ema_path}")
+    start_step = load_checkpoint(accelerator, model, optimizer, scheduler, config, ema_model)
+    logger.info("Training started")
+    global_step = start_step
+    session_start_step = start_step
     
     logger.info("Training started")
     global_step = start_step
@@ -454,7 +339,7 @@ def main():
                     optimizer.zero_grad()
 
                     if ema_model is not None:
-                        ema_model.step(model)
+                        ema_model.step(accelerator.unwrap_model(model))
 
             if accelerator.sync_gradients:
                 progress_bar.update(1)
@@ -477,22 +362,17 @@ def main():
                     logger.info(f"Epoch {epoch+1}/{config['Model']['num_epochs']}, Step {global_step}/{num_training_steps}, Loss {loss.item():.4f}, LR {scheduler.get_last_lr()[0]:.7f}, Speed {steps_per_sec:.2f} steps/s")
 
                 if global_step % 1000 == 0:
-                    save_checkpoint(accelerator, model, optimizer, scheduler, global_step, config)
-                    if ema_model:
-                        save_ema_lora_model(accelerator, model, ema_model, config, step=global_step)
+                    save_checkpoint(accelerator, model, optimizer, scheduler, global_step, config, ema_model)
 
         avg_epoch_loss = sum(epoch_losses) / len(epoch_losses) if epoch_losses else 0.0
         logger.info(f"Epoch {epoch+1}/{config['Model']['num_epochs']} completed - Average Loss: {avg_epoch_loss:.4f}")
 
         if save_epochs_interval == 0 or (epoch + 1) % save_epochs_interval == 0:
-            save_checkpoint(accelerator, model, optimizer, scheduler, global_step, config)
-            if ema_model:
-                save_ema_lora_model(accelerator, model, ema_model, config, step=global_step)
+            save_checkpoint(accelerator, model, optimizer, scheduler, global_step, config, ema_model)
             logger.info(f"Checkpoint saved at epoch {epoch+1}")
 
     logger.info("Training complete, saving final model")
-    save_lora_model(accelerator, model, config)
-    save_ema_lora_model(accelerator, model, ema_model, config, step=global_step)
+    save_lora_model(accelerator, model, config, step=None, ema_model=ema_model)
 
     if accelerator.is_main_process:
         accelerator.end_training()
