@@ -550,6 +550,10 @@ class DPODataset(Dataset):
         preference_json_path,
         caption_dropout_rate=0.1,
         real_ratio=0.2,
+        use_cache=False,  
+        vae=None,
+        device="cuda",
+        dtype=torch.float32
     ):
         """
         Args:
@@ -559,6 +563,10 @@ class DPODataset(Dataset):
         """
         self.caption_dropout_rate = caption_dropout_rate
         self.real_ratio = real_ratio
+        self.use_cache = use_cache
+        self.vae = vae
+        self.device = device
+        self.dtype = dtype
 
         # 加载偏好对数据
         # 预期格式示例: 
@@ -578,8 +586,6 @@ class DPODataset(Dataset):
         #   },
         #   ...
         # ]
-        self.caption_dropout_rate = caption_dropout_rate
-        self.real_ratio = real_ratio
 
         # 加载 JSON
         with open(preference_json_path, 'r', encoding='utf-8') as f:
@@ -607,10 +613,8 @@ class DPODataset(Dataset):
         # 1. 为 preference_data 构建 bucket_to_indices，用于 BatchSampler
         self.bucket_to_indices = {}
         for idx, item in enumerate(self.preference_data):
-            # 默认分辨率防错，JSON 中 resolution 格式为 [w, h]
             res_list = item.get("resolution", [1024, 1024])
             res = (res_list[0], res_list[1]) 
-            
             if res not in self.bucket_to_indices:
                 self.bucket_to_indices[res] = []
             self.bucket_to_indices[res].append(idx)
@@ -620,13 +624,91 @@ class DPODataset(Dataset):
         for item in self.real_reg_data:
             res_list = item.get("resolution", [1024, 1024])
             res = (res_list[0], res_list[1])
-            
             if res not in self.real_data_by_reso:
                 self.real_data_by_reso[res] = []
             self.real_data_by_reso[res].append(item)
 
         logger.info(f"DPO Buckets found: {list(self.bucket_to_indices.keys())}")
 
+        if self.use_cache and vae is not None:
+            self._prepare_cache(vae, device)
+
+    def _prepare_cache(self):
+        """扫描并生成 VAE Latents 缓存"""
+        logger.info("Checking DPO cache files...")
+        
+        # 收集所有涉及的图片路径 (Chosen 和 Rejected)
+        unique_paths = set()
+        
+        # 1. 从 preference_data 收集
+        for item in self.preference_data:
+            if item.get("dpo_pair"):
+                unique_paths.add(item["dpo_pair"]["chosen"])
+                unique_paths.add(item["dpo_pair"]["rejected"])
+        
+        # 2. 从 real_reg_data 收集
+        for item in self.real_reg_data:
+            if item.get("real_image_path"):
+                unique_paths.add(item["real_image_path"])
+            gen_paths = item.get("generated_image_paths")
+            if isinstance(gen_paths, list):
+                for p in gen_paths: unique_paths.add(p)
+            elif isinstance(gen_paths, str):
+                unique_paths.add(gen_paths)
+
+        # 检查缺失的缓存
+        missing_paths = []
+        for path in unique_paths:
+            if not os.path.exists(path): continue
+            cache_path = f"{path}.safetensors"
+            if not os.path.exists(cache_path):
+                missing_paths.append(path)
+
+        if missing_paths:
+            logger.info(f"Generating {len(missing_paths)} cache files for DPO...")
+            self.vae.eval().to(self.device)
+            
+            # 建立 path -> resolution 映射
+            path_to_reso = {}
+            for item in self.preference_data:
+                res = tuple(item.get("resolution", [1024, 1024]))
+                if item.get("dpo_pair"):
+                    path_to_reso[item["dpo_pair"]["chosen"]] = res
+                    path_to_reso[item["dpo_pair"]["rejected"]] = res
+            
+            for path in tqdm(missing_paths, desc="Caching DPO"):
+                try:
+                    target_width, target_height = path_to_reso.get(path, (self.resolution, self.resolution))
+                    pixel_values = self.load_image(path, target_height, target_width).unsqueeze(0).to(self.device)
+                    
+                    with torch.no_grad():
+                        latents = self.vae.encode(pixel_values).latent_dist.mode()
+                        scaling_factor = getattr(self.vae.config, 'scaling_factor', 0.3611)
+                        shift_factor = getattr(self.vae.config, 'shift_factor', 0.1159)
+                        latents = (latents - shift_factor) * scaling_factor
+                        latents = latents.squeeze(0).cpu() # (4, h, w)
+
+                    save_file({
+                        "latents": latents,
+                        "width": torch.tensor(target_width),
+                        "height": torch.tensor(target_height)
+                    }, f"{path}.safetensors")
+                    
+                except Exception as e:
+                    logger.error(f"Failed to cache {path}: {e}")
+            logger.info("Cache generation complete.")
+        else:
+            logger.info("All cache files found.")
+    
+    def load_cached_latents(self, path):
+        """加载缓存的 Latents"""
+        cache_path = f"{path}.safetensors"
+        if os.path.exists(cache_path):
+            data = load_file(cache_path)
+            return data["latents"]
+        else:
+            raise FileNotFoundError(f"Cache not found: {cache_path}")
+    
     def __len__(self):
         return len(self.preference_data)
 
@@ -700,43 +782,53 @@ class DPODataset(Dataset):
         return chosen_path, rejected_path, caption, target_width, target_height
 
     def __getitem__(self, idx):
-        # 1. 确定当前样本的目标分辨率 (由 preference_data 决定，Sampler 会保证同一个 Batch 的 idx 都在同一分辨率)
+        # 1. 确定当前样本的目标分辨率 (由 preference_data 决定，保证同一个 Batch 的 idx 都在同一分辨率)
         base_item = self.preference_data[idx]
         w, h = base_item.get("resolution", [1024, 1024])
         target_reso = (w, h)
         
-        use_real_regularization = (
-            self.real_ratio > 0 
-            and random.random() < self.real_ratio
-        )
+        use_real_regularization = (self.real_ratio > 0 and random.random() < self.real_ratio)
 
-        chosen_path, rejected_path, caption, target_width, target_height = None, None, None, None, None
+        chosen_path, rejected_path, caption= None, None, None
 
         if use_real_regularization:
-            chosen_path, rejected_path, caption, target_width, target_height = self._get_real_pair(target_reso)
-        # 如果没有启用 real regularization 或者 找不到同分辨率的 real data，回退到 DPO 数据
+            chosen_path, rejected_path, caption, _, _ = self._get_real_pair(target_reso)
         if chosen_path is None:
-            chosen_path, rejected_path, caption, target_width, target_height = self._get_preference_pair(idx)
-
-        # 加载图片
-        try:
-            chosen_img = self.load_image(chosen_path, target_height, target_width)
-            rejected_img = self.load_image(rejected_path, target_height, target_width)
-        except Exception as e:
-            logger.error(f"Error loading images for idx {idx}: {e}")
-            # 发生错误时生成全黑图防止崩坏
-            chosen_img = torch.zeros((3, target_height, target_width))
-            rejected_img = torch.zeros((3, target_height, target_width))
-
-        # Caption Dropout (维持 CFG 能力)
+            chosen_path, rejected_path, caption, _, _ = self._get_preference_pair(idx)
+        # Caption Dropout
         if random.random() < self.caption_dropout_rate:
             caption = ""
 
-        return {
-            "pixel_values_chosen": chosen_img,
-            "pixel_values_rejected": rejected_img,
-            "caption": caption
-        }
+        # 加载图片
+        if self.use_cache:
+            try:
+                latents_chosen = self.load_cached_latents(chosen_path)
+                latents_rejected = self.load_cached_latents(rejected_path)
+                return {
+                    "latents_chosen": latents_chosen,
+                    "latents_rejected": latents_rejected,
+                    "caption": caption,
+                    "cached": True
+                }
+            except Exception as e:
+                logger.error(f"Error loading cache for {idx}: {e}")
+                dummy = torch.zeros((4, h // 8, w // 8))
+                return {"latents_chosen": dummy, "latents_rejected": dummy, "caption": "", "cached": True}
+        else:
+            try:
+                chosen_img = self.load_image(chosen_path, h, w)
+                rejected_img = self.load_image(rejected_path, h, w)
+            except Exception as e:
+                logger.error(f"Error loading images for idx {idx}: {e}")
+                chosen_img = torch.zeros((3, h, w))
+                rejected_img = torch.zeros((3, h, w))
+
+            return {
+                "pixel_values_chosen": chosen_img,
+                "pixel_values_rejected": rejected_img,
+                "caption": caption,
+                "cached": False
+            }
 
 class DPOBucketBatchSampler(BucketBatchSampler):
     def __init__(self, dataset, batch_size, shuffle=True, seed=42, num_replicas=1, rank=0):
