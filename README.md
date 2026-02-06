@@ -30,6 +30,9 @@ git clone https://github.com/cosmic1neko/NewbieLoraTrainer.git
 cd NewbieLoraTrainer  
 source venv/bin/activate
 
+# Download base model
+hf download NewBie-AI/NewBie-image-Exp0.1 --local-dir ./
+
 # SFT
 pip install torch==2.9.0 torchvision==0.24.0 torchaudio==2.9.0 --index-url https://download.pytorch.org/whl/cu128 
 
@@ -54,39 +57,66 @@ SFT is the standard way to train a LoRA on a set of images and captions.
 **Preparation:**
 
 * Organize your dataset: A folder containing images and corresponding .txt caption files.  
-* Configure your training parameters in lora.toml or config\_template.toml.
+* Configure your training parameters in `lora.toml`.
 
 **Execution:**
 
 ```
-python train_newbie_lora.py --config ./lora.toml
+# multi_GPU
+accelerate launch --multi_gpu --num_processes=2 --mixed_precision=bf16 train_newbie_lora.py --config_file lora.toml 2>&1 | tee /root/logs.log
+# single_GPU
+accelerate launch --mixed_precision=bf16 train_newbie_lora.py --config_file lora.toml 2>&1 | tee /root/logs.log
 ```
-
-*The script will load the model, apply LoRA layers to the transformer/attention blocks, and begin the training loop using Flow Matching loss.*
 
 ### **2\. Direct Preference Optimization (DPO)**
 
 DPO is used to "fine-tune" a model's behavior based on preferences (e.g., choosing which image looks better).
 
-#### **Step A: Data Annotation**
+#### **Step A: Offline dataset**
 
-To train DPO, you need pairs of images where one is "preferred" (chosen) and the other is "rejected." Use the provided Gradio tool:
+We need to use the SFT model as an image generator to generate an offline dataset, which will serve as the basis for constructing preference pairs later.
 
 ```
-python gradio_dpo_annotator.py --data_path ./path_to_your_generated_images
+python offline_dataset.py \
+  --config_file lora.toml \
+  --lora_path /path_to_sft \
+  --output_dir ./offline_dataset \
+  --num_samples 2 \
+  --steps 28 \
+  --max_data_samples 2000 \
+  --seed 114514
+```
+
+#### **Step B: Auto Annotation**
+
+To train DPO, you need pairs of images where one is "preferred" (chosen) and the other is "rejected". Use `HPSv2.1` and `mmpose` to build preference pairing automatically:
+
+```
+python dataset_reward.py \
+  --input_json ./offline_dataset/dataset.json \
+  --w_anatomy 1 \
+  --w_hps 20
+```
+
+#### **Step C: Manual Annotation**
+
+Further manual annotation preferences. Use the provided Gradio tool:
+
+```
+python gradio_dpo_annotator.py --input_json ./offline_dataset/dataset_scored.json
 ```
 
 * This UI allows you to compare two images side-by-side.  
 * It saves a JSON file mapping prompts to "chosen" and "rejected" image paths.
 
-#### **Step B: DPO Training**
+#### **Step D: DPO Training**
 
-Once you have your preference dataset, update dpo\_config.toml to point to your annotation file.
+Once you have your preference dataset, update `dpo_config.toml` to point to your annotation file.
 
 **Execution:**
 
 ```
-python train_lora_dpo.py --config ./dpo_config.toml
+accelerate launch --multi_gpu --num_processes=2 --mixed_precision=bf16 train_lora_dpo.py --config_file dpo_config.toml 2>&1 | tee /root/logs.log
 ```
 
 *DPO training calculates the implicit reward of the "chosen" image vs. the "rejected" image and pushes the LoRA weights to favor the preferred style.*
