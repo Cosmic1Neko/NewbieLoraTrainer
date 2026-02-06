@@ -1,170 +1,97 @@
-# Newbie Trainer
+# **NewbieLoraTrainer**
 
-`newbie trainer` is a training toolkit designed specifically for the **Newbie AI** ecosystem.  
-It supports parameter-efficient fine-tuning of Newbie base models and currently provides two training modes: **LoRA** and **LoKr**. The goal is to balance output quality with lower VRAM and compute requirements, so you can quickly get started on both local machines and servers.
+A lightweight and efficient LoRA (Low-Rank Adaptation) trainer designed for modern diffusion models. This repository focuses on both standard Supervised Fine-Tuning (SFT) and advanced RLHF-style alignment using Direct Preference Optimization (DPO).
 
----
+## **🚀 Key Features**
 
-## Project Overview
+Compared to standard or "original" LoRA trainers, this repository introduces several advanced capabilities:
 
-The goal of this trainer is to provide Newbie AI users with a solution that is:
+* **VAE Enhancement**: Replaced the original Flux.1 VAE with EQ-VAE and modified the `padding_mode` of `nn.conv2d` to "reflect" to mitigate edge artifacts in generated images.
+* **Multi-Resolution Loss**: Implemented the multi-resolution objective from Lumina Image 2.0 (Original Loss + 4x Downsampled Loss). This helps maintain global image structure during training, though it increases computational overhead.
+* **Dynamic Time-Step Shifting**: Fixed potential issues with `do_shift`, ensuring that the time-step $t$ is correctly shifted based on the actual image resolution rather than a fixed global resolution.
+* **LoRA-Focused Training**: Removed LYCORIS LoKr support in favor of a full migration to the PEFT library for LoRA fine-tuning. Added parameters to enable DoRA (Weight-Decomposed Low-Rank Adaptation).
+* **Optimized Caching Strategy**: Modified the `use_cache` behavior to default to caching image latents only, excluding text embeddings to maintain flexibility.
+* **Advanced Caption Processing**: Added useful caption features including `dropout_caption_rate` (for unconditional generation training to improve Classifier-Free Guidance) and `shuffle_caption`.
+* **Gradient Accumulation**: Integrated gradient accumulation functionality to enable training with effectively larger batch sizes on consumer hardware.
+* **Improved Logging**: Replaced TensorBoard with Weights & Biases (wandb) for more comprehensive experiment tracking and loss visualization.
+* **Refined Resolution Bucketing**: Implemented a more granular bucketing strategy based on `sd-scripts` to minimize cropping loss and support diverse aspect ratios.
+* **Latent Transformation Fix**: Corrected the latent scaling logic from `latents = latents * scaling_factor` to `latents = (latents - shift_factor) * scaling_factor`.
+* **Direct Preference Optimization (DPO)**: Support for training LoRA using preference data (Win/Loss pairs), allowing models to align better with human aesthetics or specific requirements.  
+* **Integrated DPO Annotator**: A built-in Gradio-based UI for quickly labeling preference pairs from generated images.  
+* **Exponential Moving Average (EMA)**: Support for maintaining EMA weights `use_ema` during training. EMA helps in producing more stable models, reducing artifacts, and improving the overall aesthetic quality of generated images.
 
-- **Easy to use**: Complete training workflows via configuration files and simple command-line interfaces.
-- **Highly adapted**: Customized and optimized for Newbie model structures and characteristics.
-- **Extensible**: Friendly to secondary development and easy to integrate into your own pipelines (e.g., ComfyUI workflows, batch generation scripts, etc.).
+## **🛠️ Installation**
 
-If you are already using Newbie inference models, this trainer will help you quickly fine-tune styles, characters, and artistic directions to build your own personalized models.
+Ensure you have Python 3.10+ and CUDA installed.
 
----
+git clone \[https://github.com/cosmic1neko/NewbieLoraTrainer.git\](https://github.com/cosmic1neko/NewbieLoraTrainer.git)  
+cd NewbieLoraTrainer  
+pip install \-r requirements.txt
 
-##  Fork Features
+## **📖 Training Guide**
 
-1. **VAE Enhancement**: Replaced the original Flux.1 VAE with EQ-VAE and modified the `padding_mode` of `nn.conv2d` to "reflect" to mitigate edge artifacts in generated images.
-2. **Multi-Resolution Loss**: Implemented the multi-resolution objective from Lumina Image 2.0 (Original Loss + 4x Downsampled Loss). This helps maintain global image structure during training, though it increases computational overhead.
-3. **Dynamic Time-Step Shifting**: Fixed potential issues with `do_shift`, ensuring that the time-step $t$ is correctly shifted based on the actual image resolution rather than a fixed global resolution.
-4. **LoRA-Focused Training**: Removed LYCORIS LoKr support in favor of a full migration to the PEFT library for LoRA fine-tuning. Added parameters to enable DoRA (Weight-Decomposed Low-Rank Adaptation).
-5. **Optimized Caching Strategy**: Modified the `use_cache` behavior to default to caching image latents only, excluding text embeddings to maintain flexibility.
-6. **Advanced Caption Processing**: Added useful caption features including `dropout_caption_rate` (for unconditional generation training to improve Classifier-Free Guidance) and `shuffle_caption`.
-7. **Gradient Accumulation**: Integrated gradient accumulation functionality to enable training with effectively larger batch sizes on consumer hardware.
-8. **Improved Logging**: Replaced TensorBoard with Weights & Biases (wandb) for more comprehensive experiment tracking and loss visualization.
-9. **Refined Resolution Bucketing**: Implemented a more granular bucketing strategy based on `sd-scripts` to minimize cropping loss and support diverse aspect ratios.
-10. **Latent Transformation Fix**: Corrected the latent scaling logic from `latents = latents * scaling_factor` to `latents = (latents - shift_factor) * scaling_factor`.
----
+### **1\. Supervised Fine-Tuning (SFT)**
 
-## Important Notes
-* Inference with rsLoRA: If you enable use_rslora during training and use ComfyUI for inference, you must apply the correct strength adjustment. The formula is: `strength = lora_alpha / sqrt(lora_rank)`.
+SFT is the standard way to train a LoRA on a set of images and captions.
 
-* CFG and Image Quality: It is strongly recommended to enable `dropout_caption_rate`. This trains the model's unconditional generation capability, which effectively prevents "fried images" (over-saturation/artifacting) when using high CFG scales. This might be one of the reasons why NewBie-v0.1 produces "fried images" when the Negative Prompt is empty.
----
+**Preparation:**
 
-## Environment & Setup
+* Organize your dataset: A folder containing images and corresponding .txt caption files.  
+* Configure your training parameters in lora.toml or config\_template.toml.
 
-The following steps assume a Python environment. It is recommended to use **Python 3.10+** and an NVIDIA GPU with CUDA support on Linux or Windows.
+**Execution:**
 
-### 1. Clone the Repository with Git
+python train\_newbie\_lora.py \--config ./lora.toml
 
-```bash
-git clone https://github.com/NewBieAI-Lab/NewbieLoraTrainer.git
-cd NewbieLoraTrainer
-```
+*The script will load the model, apply LoRA layers to the transformer/attention blocks, and begin the training loop using Flow Matching loss.*
 
-### 2. Use venv to Manage a Virtual Environment (Recommended)
+### **2\. Direct Preference Optimization (DPO)**
 
-Using `venv` isolates this project’s dependencies from your system Python environment and avoids conflicts between different projects.
+DPO is used to "fine-tune" a model's behavior based on preferences (e.g., choosing which image looks better).
 
-```bash
-# Create a virtual environment
-python -m venv venv
+#### **Step A: Data Annotation**
 
-# Activate the virtual environment
-# Windows
-venv\Scripts\activate
+To train DPO, you need pairs of images where one is "preferred" (chosen) and the other is "rejected." Use the provided Gradio tool:
 
-# Linux / macOS
-source venv/bin/activate
-```
+python gradio\_dpo\_annotator.py \--data\_path ./path\_to\_your\_generated\_images
 
-### 3. Install PyTorch
+* This UI allows you to compare two images side-by-side.  
+* It saves a JSON file mapping prompts to "chosen" and "rejected" image paths.
 
-Please visit the official PyTorch website and choose the correct installation command according to your **CUDA version** and operating system.  
-For example (only an example, please adjust to your actual setup):
+#### **Step B: DPO Training**
 
-```bash
-pip install torch torchvision
-```
+Once you have your preference dataset, update dpo\_config.toml to point to your annotation file.
 
-> Note: If you want GPU acceleration, make sure to install a PyTorch build with CUDA support.
+**Execution:**
 
-### 4. Install Flash-Attention and Triton
+python train\_lora\_dpo.py \--config ./dpo\_config.toml
 
-To further improve training speed and VRAM efficiency, it is recommended to install **Flash-Attention** and **Triton**:
+*DPO training calculates the implicit reward of the "chosen" image vs. the "rejected" image and pushes the LoRA weights to favor the preferred style.*
 
-```bash
-pip install flash-attn
-pip install triton
-```
+## **🔧 Utilities**
 
-Please refer to the tutorials linked below or the official documentation of each project if you run into compilation or CUDA-related issues during installation.
+### **Model Conversion**
 
-### 5. Install Project Dependencies
+After training, convert your results to the Diffusers format for use in other web UIs or pipelines:
 
-After activating the virtual environment and installing PyTorch, install the remaining dependencies required by this project with:
+python convert\_newbie\_to\_diffusers.py \\  
+    \--model\_path ./output/my\_lora.safetensors \\  
+    \--output\_path ./output/my\_lora\_diffusers.safetensors
 
-```bash
-pip install -r requirements.txt
-```
+### **FLUX VAE Scale Calculation**
 
-Once these steps are completed, your basic environment is ready and you can start LoRA / LoKr training following the tutorials.
+For users working with FLUX models, you can calculate the appropriate VAE scale factor:
 
----
+python calc\_flux\_vae\_scale.py \--image\_dir ./my\_dataset
 
-## Training Tutorials
+## **📂 Project Structure**
 
-If this is your first time using the trainer, it is strongly recommended to read the following tutorial documents first.  
-They explain data preparation, configuration files, command-line examples, and more.
+* train\_newbie\_lora.py: Entry point for standard SFT.  
+* train\_lora\_dpo.py: Entry point for DPO.  
+* transport/: Core logic for Flow Matching and DPM solvers.  
+* models/: Model definition and LoRA injection logic.  
+* dataset.py / dataset\_reward.py: Data loading pipelines.
 
-- **Chinese Tutorial** (recommended for Chinese-speaking users):  
-  https://www.notion.so/Newbie-AI-lora-2b84f7496d81803db524f5fc4a9c94b9?source=copy_link
+## **Acknowledgments**
 
-- **English Tutorial** (for international / English-speaking users):  
-  https://www.notion.so/Newbie-AI-lora-training-tutorial-English-2c2e4ae984ab8177b312e318827657e6?source=copy_link
-
-The tutorials typically cover:
-
-- Detailed environment and dependency explanations  
-- How to prepare and tag your training dataset  
-- Example configuration files and parameter descriptions  
-- Common error patterns and troubleshooting tips  
-
----
-
-## Using the Trained Results
-
-### 1. Merging LoRA with `merge_lora.py`
-
-After completing LoRA training, you can use the provided `merge_lora.py` script to merge the trained LoRA with a base model.  
-This produces a standalone merged model that can be used directly in environments without native LoRA support.  
-(LoKr merging is **not** supported yet.)
-
-Example command (for illustration only):
-
-```bash
-python merge_lora.py   --base_model /path/to/base/model   --lora_path /path/to/trained_lora.safetensors   --output_path /path/to/merged_model
-```
-
-Please adjust paths and arguments in the script or command line according to your actual setup.
-
-### 2. Loading LoRA Directly in ComfyUI
-
-If you are using **ComfyUI**, you can load a trained LoRA directly through the **Newbie AI LoRA Loader node**, without merging the model beforehand.
-
-Typical workflow:
-
-1. Place the trained `.safetensors` LoRA file into ComfyUI’s `loras` directory (or your custom directory).
-2. Add the Newbie AI LoRA Loader node in your ComfyUI workflow.
-3. Select the corresponding LoRA file in the node.
-4. Connect it to your Newbie base model inference pipeline and start image generation.
-
----
-
-## Acknowledgements (Thanks)
-
-The overall design and implementation of this trainer is heavily inspired by excellent open-source projects in the community, especially:
-
-- [kohya-ss / sd-scripts](https://github.com/kohya-ss/sd-scripts)
-
-The `newbie trainer` borrows ideas from this project in terms of training flow, parameter design, and parts of the code structure.  
-We would like to express our sincere thanks to kohya-ss and all contributors to sd-scripts.
-
----
-
-## License
-
-This project is released under the **Apache License 2.0**. Under the terms of this license, you are allowed to:
-
-- Freely use, modify, and distribute this project’s code.
-- Integrate it into your personal or commercial projects.
-
-For full details, please refer to the `LICENSE` file in this repository or the official Apache 2.0 license documentation.
-
-If you have extended or modified this project, we kindly encourage you to credit the original source in your documentation and consider contributing improvements back to the community to help grow the Newbie ecosystem.
+This project utilizes logic from transport for Flow Matching and is inspired by various modern diffusion training techniques.
