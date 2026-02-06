@@ -58,7 +58,9 @@ SFT is the standard way to train a LoRA on a set of images and captions.
 
 **Execution:**
 
-python train\_newbie\_lora.py \--config ./lora.toml
+```
+python train_newbie_lora.py --config ./lora.toml
+```
 
 *The script will load the model, apply LoRA layers to the transformer/attention blocks, and begin the training loop using Flow Matching loss.*
 
@@ -70,7 +72,9 @@ DPO is used to "fine-tune" a model's behavior based on preferences (e.g., choosi
 
 To train DPO, you need pairs of images where one is "preferred" (chosen) and the other is "rejected." Use the provided Gradio tool:
 
-python gradio\_dpo\_annotator.py \--data\_path ./path\_to\_your\_generated\_images
+```
+python gradio_dpo_annotator.py --data_path ./path_to_your_generated_images
+```
 
 * This UI allows you to compare two images side-by-side.  
 * It saves a JSON file mapping prompts to "chosen" and "rejected" image paths.
@@ -81,7 +85,9 @@ Once you have your preference dataset, update dpo\_config.toml to point to your 
 
 **Execution:**
 
-python train\_lora\_dpo.py \--config ./dpo\_config.toml
+```
+python train_lora_dpo.py --config ./dpo_config.toml
+```
 
 *DPO training calculates the implicit reward of the "chosen" image vs. the "rejected" image and pushes the LoRA weights to favor the preferred style.*
 
@@ -91,7 +97,9 @@ python train\_lora\_dpo.py \--config ./dpo\_config.toml
 
 For users working with FLUX models, you can calculate the appropriate VAE scale factor:
 
-python calc\_flux\_vae\_scale.py \--image\_dir ./my\_dataset
+```
+python calc_flux_vae_scale.py --image_dir ./my_dataset
+```
 
 ## **📂 Project Structure**
 
