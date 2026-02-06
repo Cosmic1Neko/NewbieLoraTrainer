@@ -8,7 +8,7 @@ Compared to standard or "original" LoRA trainers, this repository introduces sev
 
 * **VAE Enhancement**: Replaced the original Flux.1 VAE with EQ-VAE and modified the `padding_mode` of `nn.conv2d` to "reflect" to mitigate edge artifacts in generated images.
 * **Multi-Resolution Loss**: Implemented the multi-resolution objective from Lumina Image 2.0 (Original Loss + 4x Downsampled Loss). This helps maintain global image structure during training, though it increases computational overhead.
-* **Dynamic Time-Step Shifting**: Fixed potential issues with `do_shift`, ensuring that the time-step $t$ is correctly shifted based on the actual image resolution rather than a fixed global resolution.
+* **Dynamic Time-Step Shifting**: Fixed potential issues with `do_shift`, ensuring that the timestep $t$ is correctly shifted based on the actual image resolution rather than a fixed global resolution.
 * **LoRA-Focused Training**: Removed LYCORIS LoKr support in favor of a full migration to the PEFT library for LoRA fine-tuning. Added parameters to enable DoRA (Weight-Decomposed Low-Rank Adaptation).
 * **Optimized Caching Strategy**: Modified the `use_cache` behavior to default to caching image latents only, excluding text embeddings to maintain flexibility.
 * **Advanced Caption Processing**: Added useful caption features including `dropout_caption_rate` (for unconditional generation training to improve Classifier-Free Guidance) and `shuffle_caption`.
@@ -22,11 +22,28 @@ Compared to standard or "original" LoRA trainers, this repository introduces sev
 
 ## **🛠️ Installation**
 
-Ensure you have Python 3.10+ and CUDA installed.
-
-git clone \[https://github.com/cosmic1neko/NewbieLoraTrainer.git\](https://github.com/cosmic1neko/NewbieLoraTrainer.git)  
+Example:
+Python 3.10.8, CUDA 12.8
+```
+export HF_ENDPOINT=https://hf-mirror.com/
+git clone https://github.com/cosmic1neko/NewbieLoraTrainer.git
 cd NewbieLoraTrainer  
-pip install \-r requirements.txt
+source venv/bin/activate
+
+# SFT
+pip install torch==2.9.0 torchvision==0.24.0 torchaudio==2.9.0 --index-url https://download.pytorch.org/whl/cu128 
+
+pip install https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download/v0.5.4/flash_attn-2.8.3+cu128torch2.9-cp310-cp310-linux_x86_64.whl
+pip install -r requirements.txt
+
+# DPO
+pip install openmim
+mim install "mmpose>=1.1.0"
+pip install "numpy<2.0"
+git clone https://github.com/tgxs002/HPSv2.git
+cd HPSv2
+pip install -e .
+```
 
 ## **📖 Training Guide**
 
@@ -69,14 +86,6 @@ python train\_lora\_dpo.py \--config ./dpo\_config.toml
 *DPO training calculates the implicit reward of the "chosen" image vs. the "rejected" image and pushes the LoRA weights to favor the preferred style.*
 
 ## **🔧 Utilities**
-
-### **Model Conversion**
-
-After training, convert your results to the Diffusers format for use in other web UIs or pipelines:
-
-python convert\_newbie\_to\_diffusers.py \\  
-    \--model\_path ./output/my\_lora.safetensors \\  
-    \--output\_path ./output/my\_lora\_diffusers.safetensors
 
 ### **FLUX VAE Scale Calculation**
 
