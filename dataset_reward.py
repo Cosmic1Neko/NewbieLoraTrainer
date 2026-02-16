@@ -142,8 +142,9 @@ class ImageScorer:
     def calculate_hps_score(self, image_path: str, prompt: str) -> float:
         """计算 HPSv2 得分"""
         try:
+            img = Image.open(image_path).convert("RGB")
             # hpsv2.score 返回 list
-            result = hpsv2.score(image_path, prompt, hps_version="v2.1")
+            result = hpsv2.score(img, prompt, hps_version="v2.1")
             return float(result[0])
         except Exception as e:
             print(f"HPSv2 计算失败 ({image_path}): {e}")
