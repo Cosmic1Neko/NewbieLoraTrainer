@@ -1,11 +1,11 @@
 """
 python offline_dataset.py \
   --config_file lora.toml \
-  --lora_path /root/autodl-tmp/output/NewBieLoRA \
+  --lora_path /root/autodl-tmp/output_ema/NewBieLoRA-1280px_step_5866_ema \
   --output_dir /root/autodl-tmp/gen_dataset \
   --num_samples 2 \
-  --steps 20 \
-  --max_data_samples 20000 \
+  --steps 25 \
+  --max_data_samples 5000 \
   --seed 114514
 """
 
@@ -29,11 +29,6 @@ from safetensors.torch import load_file
 from transport import create_transport
 from diffusers.schedulers import FlowMatchEulerDiscreteScheduler
 
-def get_lin_function(x1: float = 256, y1: float = 0.5, x2: float = 4096, y2: float = 1.15):
-    m = (y2 - y1) / (x2 - x1)
-    b = y1 - m * x1
-    return lambda x: m * x + b
-
 def parse_args():
     parser = argparse.ArgumentParser(description="生成 DPO 离线偏好数据集样本池")
     parser.add_argument("--config_file", type=str, required=True, help="训练时使用的 .toml 配置文件 (lora.toml)")
@@ -41,7 +36,7 @@ def parse_args():
     parser.add_argument("--output_dir", type=str, default="./sdpo_data_v1", help="样本图片存放目录")
     parser.add_argument("--num_samples", type=int, default=3, help="每个 Prompt 生成的样本数量 (N)")
     parser.add_argument("--steps", type=int, default=28, help="生成步数")
-    parser.add_argument("--cfg_scale", type=float, default=6, help="Classifier-Free Guidance 强度")
+    parser.add_argument("--cfg_scale", type=float, default=5, help="Classifier-Free Guidance 强度")
     parser.add_argument("--device", type=str, default="cuda", help="使用设备")
     parser.add_argument("--max_data_samples", type=int, default=-1, help="从数据集中随机抽取的样本数量，-1 为使用全部数据")
     parser.add_argument("--seed", type=int, default=42, help="随机抽样种子")
@@ -147,7 +142,8 @@ def main():
     print("预计算负向 (Unconditional) 特征...")
     # Gemma 无条件
     uncond_input = tokenizer(
-        [""], padding="max_length", pad_to_multiple_of=8,
+        ["You are an assistant designed to generate high-quality anime images with the highest degree of image-text alignment based on textual prompts. <Prompt Start>\n"], 
+        padding="max_length", pad_to_multiple_of=8,
         truncation=True, max_length=1280, return_tensors="pt"
     ).to(args.device)
     with torch.no_grad():
@@ -156,7 +152,8 @@ def main():
         uncond_cap_mask = uncond_input.attention_mask
     # CLIP 无条件
     uncond_clip_input = clip_tokenizer(
-        [""], padding=True, truncation=True,
+        ["You are an assistant designed to generate high-quality anime images with the highest degree of image-text alignment based on textual prompts. <Prompt Start>\n"], 
+        padding=True, truncation=True,
         max_length=2048, return_tensors="pt"
     ).to(args.device)
     with torch.no_grad():
@@ -224,9 +221,8 @@ def main():
 
             ######################################################################
             # 1. 初始化 Scheduler
-            scheduler = FlowMatchEulerDiscreteScheduler(num_train_timesteps=1000, use_dynamic_shifting=True)
-            mu = get_lin_function()((target_height // 16) * (target_width // 16))
-            scheduler.set_timesteps(args.steps, mu=mu)
+            scheduler = FlowMatchEulerDiscreteScheduler(num_train_timesteps=1000, shift=6.0)
+            scheduler.set_timesteps(args.steps)
                     
             # 2. 初始化噪声
             latents = torch.randn(batch_size, 16, target_height // 8, target_width // 8, device=args.device, dtype=torch.bfloat16)
