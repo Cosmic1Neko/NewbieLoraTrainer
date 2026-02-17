@@ -1,3 +1,7 @@
+"""
+python gradio_dpo_annotator.py --input_json /root/autodl-tmp/gen_dataset/dataset_scored.json
+"""
+
 import gradio as gr
 import json
 import os
