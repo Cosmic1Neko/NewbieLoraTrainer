@@ -152,12 +152,27 @@ use_rslora = true
 # LoRA 目标模块配置
 # =============================================================================
 lora_target_modules = [
-    "q_proj", 
+    # 1. 注意力机制 (覆盖主干与 LLM Adapter)
+    "q_proj",
     "k_proj",
     "v_proj",
     "output_proj",
+    "o_proj",
+    
+    # 2. 前馈神经网络 (覆盖主干与 LLM Adapter)
     "mlp.layer1",
     "mlp.layer2",
+    "mlp.0",
+    "mlp.2",
+    
+    # 3. AdaLN 条件调制机制 (DiT 核心引导层)
+    "adaln_modulation", 
+    
+    # 4. 输入/输出投影与嵌入层
+    "x_embedder",
+    "t_embedder",
+    "out_proj",
+    "final_layer.linear"
 ]
 # =============================================================================
 # 优化器配置
@@ -177,6 +192,7 @@ gradient_clip_norm = 1.0
 
 # FlashAttention-2 优化
 use_flash_attention_2 = true
+
 
 
 
