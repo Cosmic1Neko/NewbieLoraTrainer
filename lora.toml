@@ -169,10 +169,8 @@ lora_target_modules = [
     "adaln_modulation", 
     
     # 4. 输入/输出投影与嵌入层
-    "x_embedder",
     "t_embedder",
     "out_proj",
-    "final_layer.linear"
 ]
 # =============================================================================
 # 优化器配置
@@ -192,6 +190,7 @@ gradient_clip_norm = 1.0
 
 # FlashAttention-2 优化
 use_flash_attention_2 = true
+
 
 
 
