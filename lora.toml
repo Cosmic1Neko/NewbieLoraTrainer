@@ -1,6 +1,6 @@
 [Model]
 #模型加载路径，填写clip_model、text_encoder、transformer、vae、model_index.json所在的文件夹路径
-anima_repo_root = "/root/autodl-tmp/Anima" 
+anima_repo_root = "./AnimaLoraToolkit/models" 
 transformer_path = "/root/autodl-tmp/Anima/anima-preview2.safetensors"
 vae_path = "/root/autodl-tmp/Anima/qwen_image_vae.safetensors"
 qwen_model_path = "/root/autodl-tmp/Anima/qwen_3_06b_base.safetensors"
@@ -190,6 +190,7 @@ gradient_clip_norm = 1.0
 
 # FlashAttention-2 优化
 use_flash_attention_2 = true
+
 
 
 
