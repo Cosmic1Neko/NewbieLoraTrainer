@@ -32,7 +32,11 @@ from models.anima_loader import (
     load_anima_model,
     load_vae,
     load_text_encoders,
-    ensure_models_namespace
+    ensure_models_namespace,
+    _build_qwen_text_from_prompt,
+    encode_qwen,
+    _parse_weighted_tag,
+    tokenize_t5_weighted
 )
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -319,48 +323,42 @@ def get_tensors_summary(profiler_enabled=False):
     logger.info(f"{'='*80}\n")
 
 
-def compute_loss(model, vae, text_encoder, tokenizer, clip_model, clip_tokenizer, transport, batch, device, gemma3_prompt="", use_multires_loss=True, multires_factor=4):
+def compute_loss(model, vae, qwen_model, qwen_tokenizer, t5_tokenizer, transport, batch, device, gemma3_prompt="", use_multires_loss=True, multires_factor=4):
     """计算 Rectified Flow 训练损失"""
     if batch.get("cached", False):
         latents = batch["latents"].to(device)
-        #cap_feats = batch["cap_feats"].to(device)
-        #cap_mask = batch["cap_mask"].to(device)
-        #clip_text_pooled = batch["clip_text_pooled"].to(device)
         captions = batch["captions"]
-        batch_size = latents.shape[0]
     else:
         if vae is None:
             raise RuntimeError("VAE required for non-cached data")
-
         pixel_values = batch["pixel_values"].to(device)
         captions = batch["captions"]
-        batch_size = pixel_values.shape[0]
-
         with torch.no_grad():
             # Anima WanVAE 期望的输入是 5D 张量 [B, C, F, H, W]，对于纯图像，帧数 F=1
             pixel_values_5d = pixel_values.unsqueeze(2)
             latents = vae.model.encode(pixel_values_5d, vae.scale)
             latents = latents.squeeze(2)
 
+    bs = latents.shape[0]
+    
     with torch.no_grad():
-        # Gemma 编码
-        #gemma_texts = [gemma3_prompt + cap if gemma3_prompt else cap for cap in captions]
-        gemma_texts = [(gemma3_prompt + cap) if (gemma3_prompt and cap) else cap for cap in captions]
-        gemma_inputs = tokenizer(
-            gemma_texts, padding=True, pad_to_multiple_of=8,
-            truncation=True, max_length=1280, return_tensors="pt"
-        ).to(device)
-        gemma_outputs = text_encoder(**gemma_inputs, output_hidden_states=True)
-        cap_feats = gemma_outputs.hidden_states[-2]
-        cap_mask = gemma_inputs.attention_mask
-        # CLIP 编码
-        clip_inputs = clip_tokenizer(
-            captions, padding=True, truncation=True,
-            max_length=2048, return_tensors="pt"
-        ).to(device)
-        clip_text_pooled = clip_model.get_text_features(**clip_inputs)
-
-    model_kwargs = dict(cap_feats=cap_feats, cap_mask=cap_mask, clip_text_pooled=clip_text_pooled)
+        # 处理 Qwen 文本 (提取纯净标签)
+        qwen_texts = [_build_qwen_text_from_prompt(cap) for cap in captions]
+        # 添加全局 prompt 前缀（如果配置了 gemma3_prompt）
+        qwen_texts = [(gemma3_prompt + cap) if (gemma3_prompt and cap) else cap for cap in qwen_texts]
+        qwen_embeds, qwen_attn = encode_qwen(qwen_model, qwen_tokenizer, qwen_texts, device)
+        # 处理 T5 文本 (保留权重语法)
+        t5_texts = [(gemma3_prompt + cap) if (gemma3_prompt and cap) else cap for cap in captions]
+        t5_ids, t5_attn, t5_w = tokenize_t5_weighted(t5_tokenizer, t5_texts, max_length=512)
+        t5_ids = t5_ids.to(device)
+        # LLMAdapter 桥接
+        cross = model.preprocess_text_embeds(qwen_embeds, t5_ids)
+        # Anima 架构要求 cross_attn_dim 序列长度至少补齐到 512
+        if cross.shape[1] < 512:
+            cross = torch.nn.functional.pad(cross, (0, 0, 0, 512 - cross.shape[1]))
+        
+    pad_mask = torch.zeros(bs, 1, latents.shape[-2], latents.shape[-1], device=device, dtype=latents.dtype)
+    model_kwargs = dict(cross=cross, padding_mask=pad_mask)
 
     ############ 损失计算 ############
     # 原始分辨率损失
@@ -827,10 +825,9 @@ def main():
                 loss = compute_loss(
                     model, 
                     vae, 
-                    text_encoder, 
-                    tokenizer, 
-                    clip_model, 
-                    clip_tokenizer, 
+                    qwen_model,
+                    qwen_tokenizer,
+                    t5_tokenizer,
                     transport, 
                     batch, 
                     accelerator.device, 
@@ -918,5 +915,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
