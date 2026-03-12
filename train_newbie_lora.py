@@ -337,10 +337,10 @@ def compute_loss(model, vae, text_encoder, tokenizer, clip_model, clip_tokenizer
         batch_size = pixel_values.shape[0]
 
         with torch.no_grad():
-            latents = vae.encode(pixel_values).latent_dist.sample()
-            scaling_factor = getattr(vae.config, 'scaling_factor', 0.3611)
-            shift_factor = getattr(vae.config, 'shift_factor', 0.1159)
-            latents = (latents - shift_factor) * scaling_factor
+            # Anima WanVAE 期望的输入是 5D 张量 [B, C, F, H, W]，对于纯图像，帧数 F=1
+            pixel_values_5d = pixel_values.unsqueeze(2)
+            latents = vae.model.encode(pixel_values_5d, vae.scale)
+            latents = latents.squeeze(2)
 
     with torch.no_grad():
         # Gemma 编码
@@ -756,7 +756,6 @@ def main():
         qwen_model.eval()
         qwen_model.requires_grad_(False)
     if vae is not None:
-        # 注意 Anima 的 VAE 是被封装在一个 wrapper 里的 (wrapper.model)
         vae.model = vae.model.to(accelerator.device)
         vae.model.eval()
         vae.model.requires_grad_(False)
@@ -919,4 +918,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
