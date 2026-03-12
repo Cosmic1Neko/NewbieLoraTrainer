@@ -152,17 +152,12 @@ use_rslora = true
 # LoRA 目标模块配置
 # =============================================================================
 lora_target_modules = [
-    "attention.qkv",           
-    "attention.out",
-    "feed_forward.w1",
-    "feed_forward.w2",
-    "feed_forward.w3",
-    "adaLN_modulation.1",
-    "cap_embedder.1",
-    "t_embedder.mlp.0",
-    "t_embedder.mlp.2",
-    "time_text_embed.1",
-    "clip_text_pooled_proj.1", 
+    "q_proj", 
+    "k_proj",
+    "v_proj",
+    "output_proj",
+    "mlp.layer1",
+    "mlp.layer2",
 ]
 # =============================================================================
 # 优化器配置
@@ -182,6 +177,7 @@ gradient_clip_norm = 1.0
 
 # FlashAttention-2 优化
 use_flash_attention_2 = true
+
 
 
 
