@@ -681,11 +681,9 @@ class DPODataset(Dataset):
                     pixel_values = self.load_image(path, target_height, target_width).unsqueeze(0).to(self.device)
                     
                     with torch.no_grad():
-                        latents = self.vae.encode(pixel_values).latent_dist.mode()
-                        scaling_factor = getattr(self.vae.config, 'scaling_factor', 0.3611)
-                        shift_factor = getattr(self.vae.config, 'shift_factor', 0.1159)
-                        latents = (latents - shift_factor) * scaling_factor
-                        latents = latents.squeeze(0).cpu() # (4, h, w)
+                        pixels_5d = pixel_values.unsqueeze(2)
+                        latents = vae.model.encode(pixels_5d, vae.scale)
+                        latents = latents.squeeze(2).cpu()
 
                     save_file({
                         "latents": latents,
