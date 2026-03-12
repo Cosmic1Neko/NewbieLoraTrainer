@@ -184,11 +184,12 @@ def setup_lora(model, config):
     else: 
         # 获取目标模块
         default_target_modules = [
-            "attention.qkv",
-            "attention.out",
-            "feed_forward.w2",
-            "time_text_embed.1",
-            "clip_text_pooled_proj.1",
+            "q_proj", 
+            "k_proj", 
+            "v_proj", 
+            "output_proj",
+            "mlp.layer1",
+            "mlp.layer2",
         ]
         
         target_modules = config['Model'].get('lora_target_modules') or default_target_modules
@@ -915,6 +916,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
