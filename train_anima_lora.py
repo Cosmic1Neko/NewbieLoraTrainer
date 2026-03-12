@@ -368,7 +368,13 @@ def compute_loss(model, vae, qwen_model, qwen_tokenizer, t5_tokenizer, transport
     if use_multires_loss:
         # 下采样 Latents
         latents_low = apply_average_pool(latents, factor=multires_factor)
-        loss_low = transport.training_losses(model, latents_low, model_kwargs)["loss"].mean()
+        model_kwargs_low = model_kwargs.copy()
+        if "padding_mask" in model_kwargs_low:
+            # padding_mask shape: [B, 1, H, W]
+            model_kwargs_low["padding_mask"] = apply_average_pool(
+                model_kwargs_low["padding_mask"].float(), factor=multires_factor
+            ).to(model_kwargs_low["padding_mask"].dtype)
+        loss_low = transport.training_losses(model, latents_low, model_kwargs_low)["loss"].mean()
         # 求和
         loss = loss + loss_low
     return loss
@@ -709,9 +715,6 @@ def main():
     print_memory_usage("Before LoRA", args.profiler)
     model = setup_lora(model, config)
     model.to(accelerator.device)
-    if text_encoder: text_encoder.to(accelerator.device)
-    if vae: vae.to(accelerator.device)
-    if clip_model: clip_model.to(accelerator.device)
     print_memory_usage("After LoRA", args.profiler)
     
     if config['Model'].get('gradient_checkpointing', True):
@@ -916,6 +919,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
