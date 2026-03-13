@@ -149,7 +149,7 @@ class ImageCaptionDataset(Dataset):
 
         if missing_indices:
             logger.info(f"Generating {len(missing_indices)} cache files...")
-            self.vae.eval().to(self.device)
+            self.vae.model.eval().to(self.device)
             #self.text_encoder.eval().to(self.device)
             #self.clip_model.eval().to(self.device)
 
@@ -663,7 +663,7 @@ class DPODataset(Dataset):
 
         if missing_paths:
             logger.info(f"Generating {len(missing_paths)} cache files for DPO...")
-            self.vae.eval().to(self.device)
+            self.vae.model.eval().to(self.device)
             
             # 建立 path -> resolution 映射
             path_to_reso = {}
