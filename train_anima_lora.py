@@ -393,7 +393,8 @@ def compute_loss(model, vae, qwen_model, qwen_tokenizer, t5_tokenizer, transport
         with torch.no_grad():
             vae_dtype = next(vae.model.parameters()).dtype
             pixel_values_5d = pixel_values.unsqueeze(2).to(dtype=vae_dtype)
-            latents = vae.model.encode(pixel_values_5d, vae.scale)
+            vae_scale = [s.to(device=pixel_values_5d.device) for s in vae.scale]
+            latents = vae.model.encode(pixel_values_5d, vae_scale)
 
     bs = latents.shape[0]
     
