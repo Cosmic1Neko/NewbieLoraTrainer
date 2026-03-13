@@ -1,10 +1,10 @@
 [Model]
 #模型加载路径，填写clip_model、text_encoder、transformer、vae、model_index.json所在的文件夹路径
-anima_repo_root = "./AnimaLoraToolkit/models" 
+anima_repo_root = "/root/NewbieLoraTrainer/AnimaLoraToolkit/models" 
 transformer_path = "/root/autodl-tmp/Anima/anima-preview2.safetensors"
 vae_path = "/root/autodl-tmp/Anima/qwen_image_vae.safetensors"
-qwen_model_path = "/root/autodl-tmp/Anima/qwen_3_06b_base.safetensors"
-t5_tokenizer_path = "" # 可选，若留空则自动从 huggingface 下载
+qwen_model_path = "/root/autodl-tmp/Anima/qwen_3_06b"
+t5_tokenizer_path = "/root/autodl-tmp/Anima/t5_tokenizer" 
 
 # 是否信任远程代码（Gemma 和 CLIP 模型需要）
 trust_remote_code = true
@@ -16,7 +16,7 @@ output_dir = "/root/autodl-tmp/output"
 output_name = "AnimaLoRA"
 
 # 是否加载预训练的 LoRA 文件（绝对路径）
-resume_from_lora = "/root/autodl-tmp/output/AnimaLoRA"
+resume_from_lora = ""
 
 # 是否启用 EMA (指数移动平均)
 use_ema = true
@@ -49,7 +49,7 @@ caption_dropout_rate = 0.1
 # 随机丢弃tag的概率
 caption_tag_dropout_rate = 0
 # 随机丢弃artist标签的概率
-drop_artist_rate = 0.2
+drop_artist_rate = 0.1
 
 # 是否启用多分辨率损失 (Multi-Resolution Loss)
 # true: 在原始分辨率和下采样后的分辨率上同时计算 Loss，有助于学习全局结构
@@ -83,7 +83,7 @@ wandb_key = ""
 # 训练超参数
 # =============================================================================
 # 批次大小（每次前向传播处理的图像数量）
-train_batch_size = 1
+train_batch_size = 2
 
 # 训练轮数（遍历整个数据集的次数）
 num_epochs = 20
@@ -111,7 +111,7 @@ lr_warmup_steps = 1000
 # 梯度检查点
 gradient_checkpointing = false
 # 梯度累积
-gradient_accumulation_steps = 32
+gradient_accumulation_steps = 16
 
 # 混合精度训练
 # 可选值：
@@ -152,32 +152,33 @@ use_rslora = true
 # LoRA 目标模块配置
 # =============================================================================
 lora_target_modules = [
-    # 1. 注意力机制 (覆盖主干与 LLM Adapter)
     "q_proj",
     "k_proj",
     "v_proj",
     "output_proj",
     "o_proj",
-    
-    # 2. 前馈神经网络 (覆盖主干与 LLM Adapter)
+
     "mlp.layer1",
     "mlp.layer2",
     "mlp.0",
     "mlp.2",
+
+    "adaln_modulation_cross_attn.1",
+    "adaln_modulation_cross_attn.2",
+
+    "adaln_modulation_self_attn.1",
+    "adaln_modulation_self_attn.2",
+
+    "adaln_modulation_mlp.1",
+    "adaln_modulation_mlp.2",
     
-    # 3. AdaLN 条件调制机制 (DiT 核心引导层)
-    "adaln_modulation", 
-    
-    # 4. 输入/输出投影与嵌入层
-    "t_embedder",
+    "t_embedder.1.linear",
     "out_proj",
 ]
 
-[Model.lora_rank_pattern]
-"adaln_modulation" = 16
+lora_rank_pattern = {"adaln_modulation" = 16}
+lora_alpha_pattern = {"adaln_modulation" = 5.6568}
 
-[Model.lora_alpha_pattern]
-"adaln_modulation" = 5.6568
 # =============================================================================
 # 优化器配置
 # =============================================================================
@@ -196,21 +197,3 @@ gradient_clip_norm = 1.0
 
 # FlashAttention-2 优化
 use_flash_attention_2 = true
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
