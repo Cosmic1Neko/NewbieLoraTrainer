@@ -389,8 +389,8 @@ def compute_loss(model, vae, qwen_model, qwen_tokenizer, t5_tokenizer, transport
         captions = batch["captions"]
         with torch.no_grad():
             # Anima WanVAE 期望的输入是 5D 张量 [B, C, F, H, W]，对于纯图像，帧数 F=1
-            pixel_values_5d = pixel_values.unsqueeze(2)
-            latents = vae.model.encode(pixel_values_5d.to(dtype=vae_dtype), vae.scale)
+            pixel_values_5d = pixel_values.unsqueeze(2).to(dtype=next(vae.model.parameters()).dtype)
+            latents = vae.model.encode(pixel_values_5d, vae.scale)
             latents = latents.squeeze(2)
 
     bs = latents.shape[0]
@@ -983,3 +983,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
