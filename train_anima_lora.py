@@ -411,8 +411,8 @@ def compute_loss(model, vae, qwen_model, qwen_tokenizer, t5_tokenizer, transport
         # LLMAdapter 桥接
         cross = model.preprocess_text_embeds(qwen_embeds, t5_ids)
         # Anima 架构要求 cross_attn_dim 序列长度至少补齐到 512
-        if cross.shape[1] < 512:
-            cross = torch.nn.functional.pad(cross, (0, 0, 0, 512 - cross.shape[1]))
+        if cross.shape[1] < 1280:
+            cross = torch.nn.functional.pad(cross, (0, 0, 0, 1280 - cross.shape[1]))
         
     pad_mask = torch.zeros(bs, 1, latents.shape[-2], latents.shape[-1], device=device, dtype=latents.dtype)
     model_kwargs = dict(crossattn_emb=cross, padding_mask=pad_mask)
