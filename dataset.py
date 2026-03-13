@@ -196,7 +196,7 @@ class ImageCaptionDataset(Dataset):
 
                         pixel_values = transform(image).unsqueeze(0).to(self.device)
                         with torch.no_grad():
-                            pixel_values_5d = pixel_values.unsqueeze(2)
+                            pixel_values_5d = pixel_values.unsqueeze(2).to(self.dtype)
                             latents = self.vae.model.encode(pixel_values_5d, self.vae.scale)
                             latents = latents.squeeze(2).squeeze(0).cpu()
 
@@ -675,12 +675,12 @@ class DPODataset(Dataset):
             
             for path in tqdm(missing_paths, desc="Caching DPO"):
                 try:
-                    target_width, target_height = path_to_reso.get(path, (self.resolution, self.resolution))
+                    target_width, target_height = path_to_reso.get(path, (1024, 1024))
                     pixel_values = self.load_image(path, target_height, target_width).unsqueeze(0).to(self.device)
                     
                     with torch.no_grad():
-                        pixels_5d = pixel_values.unsqueeze(2)
-                        latents = vae.model.encode(pixels_5d, vae.scale)
+                        pixels_5d = pixel_values.unsqueeze(2).to(self.dtype)
+                        latents = self.vae.model.encode(pixels_5d, self.vae.scale)
                         latents = latents.squeeze(2).cpu()
 
                     save_file({
