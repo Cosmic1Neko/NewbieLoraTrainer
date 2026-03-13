@@ -410,8 +410,8 @@ def compute_loss(model, vae, qwen_model, qwen_tokenizer, t5_tokenizer, transport
         t5_ids = t5_ids.to(device)
         # LLMAdapter 桥接
         cross = model.preprocess_text_embeds(qwen_embeds, t5_ids)
-        if cross.shape[1] < 1280:
-            cross = torch.nn.functional.pad(cross, (0, 0, 0, 1280 - cross.shape[1]))
+        if cross.shape[1] < 1024:
+            cross = torch.nn.functional.pad(cross, (0, 0, 0, 1024 - cross.shape[1]))
         
     pad_mask = torch.zeros(bs, 1, latents.shape[-2], latents.shape[-1], device=device, dtype=latents.dtype)
     model_kwargs = dict(crossattn_emb=cross, padding_mask=pad_mask)
