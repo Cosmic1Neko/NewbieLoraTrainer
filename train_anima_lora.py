@@ -123,6 +123,8 @@ def load_encoders_only(config):
     logger.info("Loading Anima encoders (VAE, Qwen, T5)...")
     
     vae = load_vae(config['Model']['vae_path'], device, model_dtype, repo_root)
+    vae.scale = [s.to(device=device, dtype=model_dtype) for s in vae.scale]
+    
     qwen_model, qwen_tokenizer, t5_tokenizer = load_text_encoders(
         config['Model']['qwen_model_path'], 
         config['Model'].get('t5_tokenizer_path', ''), 
@@ -158,6 +160,7 @@ def load_model_and_tokenizer(config):
     
     model = load_transformer_only(config)
     vae = load_vae(config['Model']['vae_path'], device, model_dtype, repo_root)
+    vae.scale = [s.to(device=device, dtype=model_dtype) for s in vae.scale]
     qwen_model, qwen_tokenizer, t5_tokenizer = load_text_encoders(
         config['Model']['qwen_model_path'], 
         config['Model'].get('t5_tokenizer_path', ''), 
@@ -390,8 +393,7 @@ def compute_loss(model, vae, qwen_model, qwen_tokenizer, t5_tokenizer, transport
         with torch.no_grad():
             vae_dtype = next(vae.model.parameters()).dtype
             pixel_values_5d = pixel_values.unsqueeze(2).to(dtype=vae_dtype)
-            current_scale = [s.to(device=pixel_values_5d.device, dtype=vae_dtype) for s in vae.scale]
-            latents = vae.model.encode(pixel_values_5d, current_scale)
+            latents = vae.model.encode(pixel_values_5d, vae.scale)
 
     bs = latents.shape[0]
     
