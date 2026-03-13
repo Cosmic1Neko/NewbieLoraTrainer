@@ -28,7 +28,12 @@ from tqdm import tqdm
 import re
 import random
 from dataset import ImageCaptionDataset, BucketBatchSampler, collate_fn
-from models.anima_loader import (
+
+sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, str(Path(__file__).parent / "AnimaLoraToolkit"))
+import models
+from transport import create_transport
+from anima_train import (
     load_anima_model,
     load_vae,
     load_text_encoders,
@@ -38,10 +43,6 @@ from models.anima_loader import (
     _parse_weighted_tag,
     tokenize_t5_weighted
 )
-
-sys.path.insert(0, str(Path(__file__).parent))
-import models
-from transport import create_transport
 
 try:
     import bitsandbytes as bnb
@@ -919,6 +920,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
