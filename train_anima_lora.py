@@ -327,6 +327,55 @@ def get_tensors_summary(profiler_enabled=False):
     logger.info(f"Total tensor size: {total_size:.2f} MB ({len(tensors)} tensors)")
     logger.info(f"{'='*80}\n")
 
+def enable_anima_gradient_checkpointing(anima_model):
+    """为 Anima 架构动态注入支持梯度检查点的前向传播方法"""
+    import types
+    from torch.utils.checkpoint import checkpoint
+
+    def checkpointed_forward(
+        self,
+        x_B_C_T_H_W: torch.Tensor,
+        timesteps_B_T: torch.Tensor,
+        crossattn_emb: torch.Tensor,
+        fps=None,
+        padding_mask=None,
+    ):
+        # 1. 准备序列与位置编码
+        x_B_T_H_W_D, rope_emb_L_1_1_D, extra_pos_emb = self.prepare_embedded_sequence(
+            x_B_C_T_H_W,
+            fps=fps,
+            padding_mask=padding_mask,
+        )
+
+        if timesteps_B_T.ndim == 1:
+            timesteps_B_T = timesteps_B_T.unsqueeze(1)
+        
+        t_embedding_B_T_D, adaln_lora_B_T_3D = self.t_embedder(timesteps_B_T)
+        t_embedding_B_T_D = self.t_embedding_norm(t_embedding_B_T_D)
+
+        block_kwargs = {
+            "rope_emb_L_1_1_D": rope_emb_L_1_1_D,
+            "adaln_lora_B_T_3D": adaln_lora_B_T_3D,
+            "extra_per_block_pos_emb": extra_pos_emb,
+        }
+
+        # 2. 逐层应用 torch.utils.checkpoint
+        for block in self.blocks:
+            def custom_forward(x, blk=block):
+                return blk(x, t_embedding_B_T_D, crossattn_emb, **block_kwargs)
+            
+            # 使用 use_reentrant=False 是 PyTorch 新版本的推荐做法，能更好兼容 LoRA
+            x_B_T_H_W_D = checkpoint(custom_forward, x_B_T_H_W_D, use_reentrant=False)
+
+        # 3. 输出层处理
+        x_B_T_H_W_O = self.final_layer(x_B_T_H_W_D, t_embedding_B_T_D, adaln_lora_B_T_3D=adaln_lora_B_T_3D)
+        x_B_C_Tt_Hp_Wp = self.unpatchify(x_B_T_H_W_O)
+        
+        return x_B_C_Tt_Hp_Wp
+
+    # 将原有 forward 方法替换为支持 checkpoint 的版本
+    anima_model.forward = types.MethodType(checkpointed_forward, anima_model)
+    anima_model.gradient_checkpointing = True
 
 def compute_loss(model, vae, qwen_model, qwen_tokenizer, t5_tokenizer, transport, batch, device, gemma3_prompt="", use_multires_loss=True, multires_factor=4):
     """计算 Rectified Flow 训练损失"""
@@ -722,7 +771,12 @@ def main():
     print_memory_usage("After LoRA", args.profiler)
     
     if config['Model'].get('gradient_checkpointing', True):
-        model.gradient_checkpointing_enable()
+        unwrapped_model = model
+        if hasattr(unwrapped_model, "base_model"): 
+            unwrapped_model = unwrapped_model.base_model
+        if hasattr(unwrapped_model, "model"):
+            unwrapped_model = unwrapped_model.model
+        enable_anima_gradient_checkpointing(unwrapped_model)
         logger.info("Gradient checkpointing enabled")
     
     optimizer = setup_optimizer(model, config)
@@ -923,6 +977,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
