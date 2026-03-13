@@ -31,7 +31,6 @@ from dataset import ImageCaptionDataset, BucketBatchSampler, collate_fn
 
 sys.path.insert(0, str(Path(__file__).parent))
 sys.path.insert(0, str(Path(__file__).parent / "AnimaLoraToolkit"))
-import models
 from transport import create_transport
 from anima_train import (
     load_anima_model,
@@ -920,6 +919,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
