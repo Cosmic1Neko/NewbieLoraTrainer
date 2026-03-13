@@ -562,7 +562,13 @@ def main():
 
     with open(args.config_file, 'r', encoding='utf-8') as f:
         config = toml.load(f)
-
+    
+    import models
+    from pathlib import Path
+    repo_root = str(Path(config['Model'].get('anima_repo_root', '.')).resolve())
+    if repo_root not in [str(Path(p).resolve()) for p in models.__path__]:
+        models.__path__.append(repo_root)
+    
     # 若配置缺少 Optimization 段，补默认值避免 KeyError
     opt_cfg = config.setdefault('Optimization', {})
     opt_cfg.setdefault('optimizer_type', 'AdamW')
@@ -977,6 +983,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
