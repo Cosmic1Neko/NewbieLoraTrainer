@@ -816,7 +816,7 @@ class DPODataset(Dataset):
                 rejected_img = self.load_image(rejected_path, target_h, target_w)
             except Exception as e:
                 logger.error(f"Error loading images for idx {idx}: {e}")
-                chosen_img = torch.zeros((3, target_h, target_w)
+                chosen_img = torch.zeros((3, target_h, target_w))
                 rejected_img = torch.zeros((3, target_h, target_w))
 
             return {
