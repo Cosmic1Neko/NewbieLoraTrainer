@@ -86,7 +86,7 @@ wandb_key = ""
 train_batch_size = 2
 
 # 训练轮数（遍历整个数据集的次数）
-num_epochs = 20
+num_epochs = 10
 
 # Checkpoint 保存间隔（按 Epoch）
 # 每隔多少个 epoch 保存一次检查点
