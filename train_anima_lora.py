@@ -177,7 +177,9 @@ def setup_lora(model, config):
     use_rslora=config['Model'].get('use_rslora', False)
     train_norm=config['Model'].get('train_norm', False)
     resume_lora_path = config['Model'].get('resume_from_lora', None)
-
+    rank_pattern = config['Model'].get('lora_rank_pattern', {})
+    alpha_pattern = config['Model'].get('lora_alpha_pattern', {})
+    
     if resume_lora_path:
         peft_model = PeftModel.from_pretrained(model, resume_lora_path, is_trainable=True)
         logger.info(f"load LoRA weights from {resume_lora_path}")
@@ -203,6 +205,8 @@ def setup_lora(model, config):
             task_type=None,
             use_dora=use_dora,
             use_rslora=use_rslora,
+            rank_pattern=rank_pattern,
+            alpha_pattern=alpha_pattern
         )
         
         peft_model = get_peft_model(model, lora_config, low_cpu_mem_usage=False)
@@ -919,6 +923,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
