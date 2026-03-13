@@ -156,12 +156,9 @@ lora_target_modules = [
     "k_proj",
     "v_proj",
     "output_proj",
-    "o_proj",
 
     "mlp.layer1",
     "mlp.layer2",
-    "mlp.0",
-    "mlp.2",
 
     "adaln_modulation_cross_attn.1",
     "adaln_modulation_cross_attn.2",
