@@ -197,7 +197,8 @@ class ImageCaptionDataset(Dataset):
                         pixel_values = transform(image).unsqueeze(0).to(self.device)
                         with torch.no_grad():
                             pixel_values_5d = pixel_values.unsqueeze(2).to(self.dtype)
-                            latents = self.vae.model.encode(pixel_values_5d, self.vae.scale)
+                            vae_scale = [s.to(device=pixel_values_5d.device) for s in self.vae.scale]
+                            latents = self.vae.model.encode(pixel_values_5d, vae_scale)
                             latents = latents.squeeze(2).squeeze(0).cpu()
 
                         save_file({
@@ -680,7 +681,8 @@ class DPODataset(Dataset):
                     
                     with torch.no_grad():
                         pixel_values_5d = pixel_values.unsqueeze(2).to(self.dtype)
-                        latents = self.vae.model.encode(pixel_values_5d, self.vae.scale)
+                        vae_scale = [s.to(device=pixel_values_5d.device) for s in self.vae.scale]
+                        latents = self.vae.model.encode(pixel_values_5d, vae_scale)
                         latents = latents.squeeze(2).cpu()
 
                     save_file({
