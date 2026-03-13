@@ -209,7 +209,8 @@ def setup_lora(model, config):
             use_dora=use_dora,
             use_rslora=use_rslora,
             rank_pattern=rank_pattern,
-            alpha_pattern=alpha_pattern
+            alpha_pattern=alpha_pattern,
+            exclude_modules=["llm_adapter"],
         )
         
         peft_model = get_peft_model(model, lora_config, low_cpu_mem_usage=False)
