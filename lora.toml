@@ -71,7 +71,7 @@ enable_bucket = true
 # true: 预先缓存 VAE latents, 加速训练并节省显存
 # false: 每次实时编码（慢，但不占用磁盘空间）
 # 缓存文件保存在数据集同目录：图片.safetensors,
-use_cache = false
+use_cache = true
 
 # Gemma3 系统提示词（仅用于 Gemma3，不影响 Jina CLIP）
 gemma3_prompt = ""
@@ -125,7 +125,7 @@ mixed_precision = "bf16"
 # LoRA 配置
 # =============================================================================
 # LoRA rank（秩）
-lora_rank = 96
+lora_rank = 128
 
 # LoRA alpha
 # 使用rslora时建议固定
@@ -176,8 +176,8 @@ lora_target_modules = [
     "out_proj",
 ]
 
-lora_rank_pattern = {"adaln_modulation" = 16}
-lora_alpha_pattern = {"adaln_modulation" = 6.532}
+lora_rank_pattern = {"adaln_modulation.*" = 16}
+lora_alpha_pattern = {"adaln_modulation.*" = 5.6568}
 
 # =============================================================================
 # 优化器配置
