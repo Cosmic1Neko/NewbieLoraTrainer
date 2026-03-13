@@ -172,6 +172,12 @@ lora_target_modules = [
     "t_embedder",
     "out_proj",
 ]
+
+[Model.lora_rank_pattern]
+"adaln_modulation" = 16
+
+[Model.lora_alpha_pattern]
+"adaln_modulation" = 5.6568
 # =============================================================================
 # 优化器配置
 # =============================================================================
@@ -190,6 +196,7 @@ gradient_clip_norm = 1.0
 
 # FlashAttention-2 优化
 use_flash_attention_2 = true
+
 
 
 
