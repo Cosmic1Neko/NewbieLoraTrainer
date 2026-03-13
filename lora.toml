@@ -37,7 +37,7 @@ train_data_dir = "/root/autodl-tmp/datasets"
 resolution = 1280
 # 图像分箱参数
 min_bucket_reso = 512
-max_bucket_reso = 2048
+max_bucket_reso = 3072
 bucket_reso_step = 64
 # 是否打乱tag
 shuffle_caption = true
@@ -54,7 +54,7 @@ drop_artist_rate = 0.2
 # 是否启用多分辨率损失 (Multi-Resolution Loss)
 # true: 在原始分辨率和下采样后的分辨率上同时计算 Loss，有助于学习全局结构
 # false: 仅在原始分辨率计算 Loss，节省显存和计算量
-use_multires_loss = true
+use_multires_loss = false
 
 # 多分辨率下采样的倍率
 multires_factor = 4
@@ -71,7 +71,7 @@ enable_bucket = true
 # true: 预先缓存 VAE latents, 加速训练并节省显存
 # false: 每次实时编码（慢，但不占用磁盘空间）
 # 缓存文件保存在数据集同目录：图片.safetensors,
-use_cache = true
+use_cache = false
 
 # Gemma3 系统提示词（仅用于 Gemma3，不影响 Jina CLIP）
 gemma3_prompt = ""
@@ -86,7 +86,7 @@ wandb_key = ""
 train_batch_size = 1
 
 # 训练轮数（遍历整个数据集的次数）
-num_epochs = 10
+num_epochs = 20
 
 # Checkpoint 保存间隔（按 Epoch）
 # 每隔多少个 epoch 保存一次检查点
@@ -95,7 +95,7 @@ save_epochs_interval = 1
 
 # 学习率
 #默认推荐推荐1e-4和2e-4，可自行测试
-learning_rate = 2e-4
+learning_rate = 1e-4
 
 # 学习率调度器（控制学习率在训练过程中的变化）
 # 可选值：
@@ -103,7 +103,7 @@ learning_rate = 2e-4
 #   - "cosine": 余弦退火，推荐，平滑下降
 #   - "linear": 线性衰减
 #   - "cosine_with_restarts": 带重启的余弦，用于长时间训练
-lr_scheduler = "cosine"
+lr_scheduler = "constant_with_warmup"
 
 # 学习率预热步数
 lr_warmup_steps = 1000
@@ -125,7 +125,7 @@ mixed_precision = "bf16"
 # LoRA 配置
 # =============================================================================
 # LoRA rank（秩）
-lora_rank = 96
+lora_rank = 128
 
 # LoRA alpha
 # 使用rslora时建议固定
@@ -190,6 +190,7 @@ gradient_clip_norm = 1.0
 
 # FlashAttention-2 优化
 use_flash_attention_2 = true
+
 
 
 
