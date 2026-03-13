@@ -1,0 +1,3 @@
+[submodule "AnimaLoraToolkit"]
+	path = AnimaLoraToolkit
+	url = https://github.com/Moeblack/AnimaLoraToolkit.git
