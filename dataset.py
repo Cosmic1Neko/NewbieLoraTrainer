@@ -195,12 +195,10 @@ class ImageCaptionDataset(Dataset):
                         ])
 
                         pixel_values = transform(image).unsqueeze(0).to(self.device)
-
-                        latents = self.vae.encode(pixel_values).latent_dist.mode()
-                        scaling_factor = getattr(self.vae.config, 'scaling_factor', 0.3611)
-                        shift_factor = getattr(self.vae.config, 'shift_factor', 0.1159)
-                        latents = (latents - shift_factor) * scaling_factor
-                        latents = latents.squeeze(0).cpu()
+                        with torch.no_grad():
+                            pixel_values_5d = pixel_values.unsqueeze(2)
+                            latents = self.vae.model.encode(pixel_values_5d, self.vae.scale)
+                            latents = latents.squeeze(2).squeeze(0).cpu()
 
                         save_file({
                             "latents": latents,
