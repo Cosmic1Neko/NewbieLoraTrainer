@@ -34,7 +34,7 @@ ema_decay = 0.999
 train_data_dir = "/root/autodl-tmp/datasets"
 
 # 训练图像分辨率
-resolution = 1280
+resolution = 1024
 # 图像分箱参数
 min_bucket_reso = 512
 max_bucket_reso = 3072
@@ -189,7 +189,7 @@ lora_alpha_pattern = {"adaln_modulation.*" = 5.6568}
 #   - "AdamW": 标准 AdamW 优化器
 #   - "AdamW8bit": 8-bit AdamW 优化器（推荐）
 optimizer_type = "AdamW8bit"
-weight_decay = 0.001
+weight_decay = 0.0001
 
 # 梯度裁剪范数（Gradient Clipping）
 # 推荐值：0.5 - 2.0
