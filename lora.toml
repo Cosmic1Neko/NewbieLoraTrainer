@@ -51,14 +51,6 @@ caption_tag_dropout_rate = 0
 # 随机丢弃artist标签的概率
 drop_artist_rate = 0.1
 
-# 是否启用多分辨率损失 (Multi-Resolution Loss)
-# true: 在原始分辨率和下采样后的分辨率上同时计算 Loss，有助于学习全局结构
-# false: 仅在原始分辨率计算 Loss，节省显存和计算量
-use_multires_loss = false
-
-# 多分辨率下采样的倍率
-multires_factor = 4
-
 # DataLoader 工作线程数
 dataloader_num_workers = 8
 
