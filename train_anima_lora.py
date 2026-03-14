@@ -100,19 +100,6 @@ class EMAModel:
         for name in self.shadow:
             self.shadow[name] = self.shadow[name].to(device)
         return self
-
-def apply_average_pool(latent, factor=4):
-    """
-    Apply average pooling to downsample the latent.
-
-    Args:
-        latent (torch.Tensor): Latent tensor with shape (1, C, H, W).
-        factor (int): Downsampling factor.
-
-    Returns:
-        torch.Tensor: Downsampled latent tensor.
-    """
-    return torch.nn.functional.avg_pool2d(latent, kernel_size=factor, stride=factor)
     
 def load_encoders_only(config):
     mixed_precision = config['Model'].get('mixed_precision', 'no')
@@ -381,7 +368,7 @@ def enable_anima_gradient_checkpointing(anima_model):
     anima_model.forward = types.MethodType(checkpointed_forward, anima_model)
     anima_model.gradient_checkpointing = True
 
-def compute_loss(model, vae, qwen_model, qwen_tokenizer, t5_tokenizer, transport, batch, device, gemma3_prompt="", use_multires_loss=True, multires_factor=4):
+def compute_loss(model, vae, qwen_model, qwen_tokenizer, t5_tokenizer, transport, batch, device, gemma3_prompt=""):
     """计算 Rectified Flow 训练损失"""
     if batch.get("cached", False):
         latents = batch["latents"].to(device).unsqueeze(2)
@@ -420,19 +407,6 @@ def compute_loss(model, vae, qwen_model, qwen_tokenizer, t5_tokenizer, transport
     ############ 损失计算 ############
     # 原始分辨率损失
     loss = transport.training_losses(model, latents, model_kwargs)["loss"].mean()
-    # 低分辨率损失
-    if use_multires_loss:
-        # 下采样 Latents
-        latents_low = apply_average_pool(latents, factor=multires_factor)
-        model_kwargs_low = model_kwargs.copy()
-        if "padding_mask" in model_kwargs_low:
-            # padding_mask shape: [B, 1, H, W]
-            model_kwargs_low["padding_mask"] = apply_average_pool(
-                model_kwargs_low["padding_mask"].float(), factor=multires_factor
-            ).to(model_kwargs_low["padding_mask"].dtype)
-        loss_low = transport.training_losses(model, latents_low, model_kwargs_low)["loss"].mean()
-        # 求和
-        loss = loss + loss_low
     return loss
 
 
@@ -621,8 +595,6 @@ def main():
     caption_dropout_rate = config['Model'].get('caption_dropout_rate', 0.0)
     caption_tag_dropout_rate = config['Model'].get('caption_tag_dropout_rate', 0.0)
     drop_artist_rate = config['Model'].get('drop_artist_rate', 0.0)
-    use_multires_loss = config['Model'].get('use_multires_loss', True)
-    multires_factor = config['Model'].get('multires_factor', 4)
 
     if use_cache:
         logger.info("Checking if VAE cache files exist...")
@@ -885,7 +857,6 @@ def main():
             # 判断是否是用于 Profiling 的第一个全局步（通常是第0步或断点续训的起始步）
             is_profiling_step = (global_step == start_step) and args.profiler
 
-            # 使用 accumulate 上下文
             with accelerator.accumulate(model):
                 # ================= Profiler: Before Forward =================
                 # 仅在当前累积周期的第一个微步打印
@@ -902,9 +873,7 @@ def main():
                     transport, 
                     batch, 
                     accelerator.device, 
-                    gemma3_prompt,
-                    use_multires_loss,
-                    multires_factor
+                    gemma3_prompt
                 )
                 
                 # 记录 Loss (Accelerate 会自动处理累积步的平均，这里直接 append 即可)
