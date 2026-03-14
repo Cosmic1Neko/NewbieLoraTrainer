@@ -36,8 +36,8 @@ train_data_dir = "/root/autodl-tmp/datasets"
 # 训练图像分辨率
 resolution = 1024
 # 图像分箱参数
-min_bucket_reso = 512
-max_bucket_reso = 3072
+min_bucket_reso = 384
+max_bucket_reso = 1920
 bucket_reso_step = 64
 # 是否打乱tag
 shuffle_caption = true
@@ -98,12 +98,12 @@ learning_rate = 1e-4
 lr_scheduler = "constant_with_warmup"
 
 # 学习率预热步数
-lr_warmup_steps = 1000
+lr_warmup_steps = 500
 
 # 梯度检查点
 gradient_checkpointing = true
 # 梯度累积
-gradient_accumulation_steps = 16
+gradient_accumulation_steps = 8
 
 # 混合精度训练
 # 可选值：
