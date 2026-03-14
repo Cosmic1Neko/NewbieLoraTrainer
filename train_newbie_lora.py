@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Newbie LoRA 训练器 - 基于 Rectified Flow 的 LoRA 微调"""
+"""Anima LoRA 训练器 - 基于 Rectified Flow 的 LoRA 微调"""
 
 import os
 import sys
@@ -30,8 +30,18 @@ import random
 from dataset import ImageCaptionDataset, BucketBatchSampler, collate_fn
 
 sys.path.insert(0, str(Path(__file__).parent))
-import models
+sys.path.insert(0, str(Path(__file__).parent / "AnimaLoraToolkit"))
 from transport import create_transport
+from anima_train import (
+    load_anima_model,
+    load_vae,
+    load_text_encoders,
+    ensure_models_namespace,
+    _build_qwen_text_from_prompt,
+    encode_qwen,
+    _parse_weighted_tag,
+    tokenize_t5_weighted
+)
 
 try:
     import bitsandbytes as bnb
@@ -90,271 +100,62 @@ class EMAModel:
         for name in self.shadow:
             self.shadow[name] = self.shadow[name].to(device)
         return self
-
-def apply_average_pool(latent, factor=4):
-    """
-    Apply average pooling to downsample the latent.
-
-    Args:
-        latent (torch.Tensor): Latent tensor with shape (1, C, H, W).
-        factor (int): Downsampling factor.
-
-    Returns:
-        torch.Tensor: Downsampled latent tensor.
-    """
-    return torch.nn.functional.avg_pool2d(latent, kernel_size=factor, stride=factor)
     
 def load_encoders_only(config):
-    base_model_path = config['Model']['base_model_path']
-    trust_remote_code = config['Model'].get('trust_remote_code', True)
-    model_index_path = os.path.join(base_model_path, "model_index.json")
-    is_diffusers_format = os.path.exists(model_index_path)
-
     mixed_precision = config['Model'].get('mixed_precision', 'no')
-    if mixed_precision == 'bf16':
-        model_dtype = torch.bfloat16
-    elif mixed_precision == 'fp16':
-        model_dtype = torch.float16
-    else:
-        model_dtype = torch.float32
-
-    logger.info("Loading encoders only (VAE, text_encoder, CLIP) for cache generation...")
-
-    if is_diffusers_format:
-        text_encoder_path = os.path.join(base_model_path, "text_encoder")
-        text_encoder = AutoModel.from_pretrained(text_encoder_path, torch_dtype=model_dtype, trust_remote_code=trust_remote_code)
-        tokenizer = AutoTokenizer.from_pretrained(text_encoder_path, trust_remote_code=trust_remote_code)
-        tokenizer.padding_side = "right"
-
-        clip_model_path = os.path.join(base_model_path, "clip_model")
-        clip_model = AutoModel.from_pretrained(clip_model_path, torch_dtype=model_dtype, trust_remote_code=True)
-        clip_tokenizer = AutoTokenizer.from_pretrained(clip_model_path, trust_remote_code=True)
-
-        vae_path = os.path.join(base_model_path, "vae")
-        vae = AutoencoderKL.from_pretrained(
-            vae_path if os.path.exists(vae_path) else "black-forest-labs/FLUX.1-dev",
-            torch_dtype=torch.float32,
-            trust_remote_code=trust_remote_code
-        )
-    else:
-        gemma_path = config['Model'].get('gemma_model_path', 'google/gemma-3-4b-it')
-        clip_path = config['Model'].get('clip_model_path', 'jinaai/jina-clip-v2')
-
-        text_encoder = AutoModel.from_pretrained(gemma_path, torch_dtype=model_dtype, trust_remote_code=trust_remote_code)
-        tokenizer = AutoTokenizer.from_pretrained(gemma_path, trust_remote_code=trust_remote_code)
-        tokenizer.padding_side = "right"
-
-        clip_model = AutoModel.from_pretrained(clip_path, torch_dtype=model_dtype, trust_remote_code=True)
-        clip_tokenizer = AutoTokenizer.from_pretrained(clip_path, trust_remote_code=True)
-
-        vae_path = config['Model'].get('vae_path', 'stabilityai/sdxl-vae')
-        vae = AutoencoderKL.from_pretrained(vae_path, torch_dtype=torch.float32, trust_remote_code=trust_remote_code)
-
-    if config['Model'].get('vae_reflect_padding', False):
-        logger.info("Enabling 'reflect' padding for VAE")
-        for module in vae.modules():
-            if isinstance(module, torch.nn.Conv2d):
-                pad_h, pad_w = module.padding if isinstance(module.padding, tuple) else (module.padding, module.padding)
-                if pad_h > 0 or pad_w > 0:
-                    module.padding_mode = "reflect"
-    vae.eval()
-    vae.requires_grad_(False)
-    text_encoder.eval()
-    text_encoder.requires_grad_(False)
-    clip_model.eval()
-    clip_model.requires_grad_(False)
-
-    logger.info("Encoders loaded successfully")
-    return vae, text_encoder, tokenizer, clip_model, clip_tokenizer
-
+    model_dtype = torch.bfloat16 if mixed_precision == 'bf16' else (torch.float16 if mixed_precision == 'fp16' else torch.float32)
+    device = "cpu"
+    repo_root = Path(config['Model'].get('anima_repo_root', '.'))
+    
+    logger.info("Loading Anima encoders (VAE, Qwen, T5)...")
+    
+    vae = load_vae(config['Model']['vae_path'], device, model_dtype, repo_root)
+    vae.scale = [s.to(device=device, dtype=model_dtype) for s in vae.scale]
+    
+    qwen_model, qwen_tokenizer, t5_tokenizer = load_text_encoders(
+        config['Model']['qwen_model_path'], 
+        config['Model'].get('t5_tokenizer_path', ''), 
+        device, 
+        model_dtype
+    )
+    
+    logger.info("Anima Encoders loaded successfully")
+    return vae, qwen_model, qwen_tokenizer, t5_tokenizer, None
 
 def load_transformer_only(config):
-    base_model_path = config['Model']['base_model_path']
-    trust_remote_code = config['Model'].get('trust_remote_code', True)
-    model_index_path = os.path.join(base_model_path, "model_index.json")
-    is_diffusers_format = os.path.exists(model_index_path)
-
     mixed_precision = config['Model'].get('mixed_precision', 'no')
-    if mixed_precision == 'bf16':
-        model_dtype = torch.bfloat16
-    elif mixed_precision == 'fp16':
-        model_dtype = torch.float16
-    else:
-        model_dtype = torch.float32
-
-    logger.info(f"Loading transformer only from: {base_model_path}")
-
-    if is_diffusers_format:
-        transformer_path = os.path.join(base_model_path, "transformer")
-        config_path = os.path.join(transformer_path, "config.json")
-
-        with open(config_path, 'r') as f:
-            model_config = json.load(f)
-
-        text_encoder_path = os.path.join(base_model_path, "text_encoder")
-        text_encoder_config = AutoConfig.from_pretrained(text_encoder_path, trust_remote_code=trust_remote_code)
-        cap_feat_dim = text_encoder_config.text_config.hidden_size
-
-        model_name = model_config.get('_class_name', 'NextDiT_3B_GQA_patch2_Adaln_Refiner_WHIT_CLIP')
-
-        model = models.__dict__[model_name](
-            in_channels=model_config.get('in_channels', 16),
-            qk_norm=True,
-            cap_feat_dim=cap_feat_dim,
-            clip_text_dim=model_config.get('clip_text_dim', 1024),
-            clip_img_dim=model_config.get('clip_img_dim', 1024),
-        )
-
-        weight_path = os.path.join(transformer_path, "diffusion_pytorch_model.safetensors")
-        if os.path.exists(weight_path):
-            state_dict = load_file(weight_path)
-            missing_keys, unexpected_keys = model.load_state_dict(state_dict, strict=False)
-            if missing_keys:
-                logger.warning(f"Missing keys: {len(missing_keys)}")
-            if unexpected_keys:
-                logger.warning(f"Unexpected keys: {len(unexpected_keys)}")
-
-        if model_dtype != torch.float32:
-            model = model.to(dtype=model_dtype)
-            logger.info(f"Model converted to {model_dtype}")
-
-    else:
-        gemma_path = config['Model'].get('gemma_model_path', 'google/gemma-3-4b-it')
-
-        text_encoder_config = AutoConfig.from_pretrained(gemma_path, trust_remote_code=trust_remote_code)
-        cap_feat_dim = text_encoder_config.text_config.hidden_size
-
-        transformer_path = config['Model'].get('transformer_path', None)
-
-        model = models.NextDiT_3B_GQA_patch2_Adaln_Refiner_WHIT_CLIP(
-            in_channels=16, qk_norm=True, cap_feat_dim=cap_feat_dim,
-            clip_text_dim=1024, clip_img_dim=1024
-        )
-
-        if transformer_path and os.path.exists(transformer_path):
-            state_dict = load_file(transformer_path) if transformer_path.endswith('.safetensors') else torch.load(transformer_path, map_location='cpu')
-            model.load_state_dict(state_dict, strict=False)
-
-        if model_dtype != torch.float32:
-            model = model.to(dtype=model_dtype)
-            logger.info(f"Model converted to {model_dtype}")
-
+    model_dtype = torch.bfloat16 if mixed_precision == 'bf16' else (torch.float16 if mixed_precision == 'fp16' else torch.float32)
+    device = "cpu"
+    repo_root = Path(config['Model'].get('anima_repo_root', '.'))
+    transformer_path = config['Model']['transformer_path']
+    
+    logger.info(f"Loading Anima transformer from: {transformer_path}")
+    
+    model = load_anima_model(transformer_path, device, model_dtype, repo_root)
     model.train()
-    logger.info(f"Transformer loaded: {model.parameter_count():,} params, cap_feat_dim={cap_feat_dim}")
-
+    
+    logger.info("Anima Transformer loaded.")
     return model
 
-
 def load_model_and_tokenizer(config):
-    base_model_path = config['Model']['base_model_path']
-    trust_remote_code = config['Model'].get('trust_remote_code', True)
-    model_index_path = os.path.join(base_model_path, "model_index.json")
-    is_diffusers_format = os.path.exists(model_index_path)
-
     mixed_precision = config['Model'].get('mixed_precision', 'no')
-    if mixed_precision == 'bf16':
-        model_dtype = torch.bfloat16
-    elif mixed_precision == 'fp16':
-        model_dtype = torch.float16
-    else:
-        model_dtype = torch.float32
-
-    logger.info(f"Loading model from: {base_model_path}")
-
-    if is_diffusers_format:
-        logger.info("Diffusers format detected, auto-loading components")
-
-        text_encoder_path = os.path.join(base_model_path, "text_encoder")
-        text_encoder = AutoModel.from_pretrained(text_encoder_path, torch_dtype=model_dtype, trust_remote_code=trust_remote_code)
-        tokenizer = AutoTokenizer.from_pretrained(text_encoder_path, trust_remote_code=trust_remote_code)
-        tokenizer.padding_side = "right"
-
-        clip_model_path = os.path.join(base_model_path, "clip_model")
-        clip_model = AutoModel.from_pretrained(clip_model_path, torch_dtype=model_dtype, trust_remote_code=True)
-        clip_tokenizer = AutoTokenizer.from_pretrained(clip_model_path, trust_remote_code=True)
-
-        transformer_path = os.path.join(base_model_path, "transformer")
-        config_path = os.path.join(transformer_path, "config.json")
-
-        with open(config_path, 'r') as f:
-            model_config = json.load(f)
-
-        cap_feat_dim = text_encoder.config.text_config.hidden_size
-        model_name = model_config.get('_class_name', 'NextDiT_3B_GQA_patch2_Adaln_Refiner_WHIT_CLIP')
-
-        model = models.__dict__[model_name](
-            in_channels=model_config.get('in_channels', 16),
-            qk_norm=True,
-            cap_feat_dim=cap_feat_dim,
-            clip_text_dim=model_config.get('clip_text_dim', 1024),
-            clip_img_dim=model_config.get('clip_img_dim', 1024),
-        )
-
-        weight_path = os.path.join(transformer_path, "diffusion_pytorch_model.safetensors")
-        if os.path.exists(weight_path):
-            state_dict = load_file(weight_path)
-            missing_keys, unexpected_keys = model.load_state_dict(state_dict, strict=False)
-            if missing_keys:
-                logger.warning(f"Missing keys: {len(missing_keys)}")
-            if unexpected_keys:
-                logger.warning(f"Unexpected keys: {len(unexpected_keys)}")
-
-        # Convert model to target dtype
-        if model_dtype != torch.float32:
-            model = model.to(dtype=model_dtype)
-            logger.info(f"Model converted to {model_dtype}")
-
-        vae_path = os.path.join(base_model_path, "vae")
-        vae = AutoencoderKL.from_pretrained(
-            vae_path if os.path.exists(vae_path) else "stabilityai/sdxl-vae",
-            torch_dtype=torch.float32,
-            trust_remote_code=trust_remote_code
-        )
-
-    else:
-        logger.info("Loading from separate paths")
-
-        gemma_path = config['Model'].get('gemma_model_path', 'google/gemma-3-4b-it')
-        clip_path = config['Model'].get('clip_model_path', 'jinaai/jina-clip-v2')
-        transformer_path = config['Model'].get('transformer_path', None)
-
-        text_encoder = AutoModel.from_pretrained(gemma_path, torch_dtype=model_dtype, trust_remote_code=trust_remote_code)
-        tokenizer = AutoTokenizer.from_pretrained(gemma_path, trust_remote_code=trust_remote_code)
-        tokenizer.padding_side = "right"
-
-        clip_model = AutoModel.from_pretrained(clip_path, torch_dtype=model_dtype, trust_remote_code=True)
-        clip_tokenizer = AutoTokenizer.from_pretrained(clip_path, trust_remote_code=True)
-
-        cap_feat_dim = text_encoder.config.text_config.hidden_size
-        model = models.NextDiT_3B_GQA_patch2_Adaln_Refiner_WHIT_CLIP(
-            in_channels=16, qk_norm=True, cap_feat_dim=cap_feat_dim,
-            clip_text_dim=1024, clip_img_dim=1024
-        )
-
-        if transformer_path and os.path.exists(transformer_path):
-            state_dict = load_file(transformer_path) if transformer_path.endswith('.safetensors') else torch.load(transformer_path, map_location='cpu')
-            model.load_state_dict(state_dict, strict=False)
-
-        # Convert model to target dtype
-        if model_dtype != torch.float32:
-            model = model.to(dtype=model_dtype)
-            logger.info(f"Model converted to {model_dtype}")
-
-        vae_path = config['Model'].get('vae_path', 'stabilityai/sdxl-vae')
-        vae = AutoencoderKL.from_pretrained(vae_path, torch_dtype=torch.float32, trust_remote_code=trust_remote_code)
-
-    model.train()
-    vae.eval()
-    vae.requires_grad_(False)
-    text_encoder.eval()
-    text_encoder.requires_grad_(False)
-    clip_model.eval()
-    clip_model.requires_grad_(False)
-
-    logger.info(f"Model loaded: {model.parameter_count():,} params, cap_feat_dim={cap_feat_dim}")
-
-    return model, vae, text_encoder, tokenizer, clip_model, clip_tokenizer
-
+    model_dtype = torch.bfloat16 if mixed_precision == 'bf16' else (torch.float16 if mixed_precision == 'fp16' else torch.float32)
+    device = "cpu"
+    repo_root = Path(config['Model'].get('anima_repo_root', '.'))
+    
+    logger.info("Loading full Anima model pipeline...")
+    
+    model = load_transformer_only(config)
+    vae = load_vae(config['Model']['vae_path'], device, model_dtype, repo_root)
+    vae.scale = [s.to(device=device, dtype=model_dtype) for s in vae.scale]
+    qwen_model, qwen_tokenizer, t5_tokenizer = load_text_encoders(
+        config['Model']['qwen_model_path'], 
+        config['Model'].get('t5_tokenizer_path', ''), 
+        device, 
+        model_dtype
+    )
+    
+    return model, vae, qwen_model, qwen_tokenizer, t5_tokenizer, None
 
 def setup_lora(model, config):
     """Apply adapter (PEFT) to model"""
@@ -366,18 +167,21 @@ def setup_lora(model, config):
     use_rslora=config['Model'].get('use_rslora', False)
     train_norm=config['Model'].get('train_norm', False)
     resume_lora_path = config['Model'].get('resume_from_lora', None)
-
+    rank_pattern = config['Model'].get('lora_rank_pattern', {})
+    alpha_pattern = config['Model'].get('lora_alpha_pattern', {})
+    
     if resume_lora_path:
         peft_model = PeftModel.from_pretrained(model, resume_lora_path, is_trainable=True)
         logger.info(f"load LoRA weights from {resume_lora_path}")
     else: 
         # 获取目标模块
         default_target_modules = [
-            "attention.qkv",
-            "attention.out",
-            "feed_forward.w2",
-            "time_text_embed.1",
-            "clip_text_pooled_proj.1",
+            "q_proj", 
+            "k_proj", 
+            "v_proj", 
+            "output_proj",
+            "mlp.layer1",
+            "mlp.layer2",
         ]
         
         target_modules = config['Model'].get('lora_target_modules') or default_target_modules
@@ -391,6 +195,9 @@ def setup_lora(model, config):
             task_type=None,
             use_dora=use_dora,
             use_rslora=use_rslora,
+            rank_pattern=rank_pattern,
+            alpha_pattern=alpha_pattern,
+            exclude_modules=["llm_adapter"],
         )
         
         peft_model = get_peft_model(model, lora_config, low_cpu_mem_usage=False)
@@ -511,60 +318,95 @@ def get_tensors_summary(profiler_enabled=False):
     logger.info(f"Total tensor size: {total_size:.2f} MB ({len(tensors)} tensors)")
     logger.info(f"{'='*80}\n")
 
+def enable_anima_gradient_checkpointing(anima_model):
+    """为 Anima 架构动态注入支持梯度检查点的前向传播方法"""
+    import types
+    from torch.utils.checkpoint import checkpoint
 
-def compute_loss(model, vae, text_encoder, tokenizer, clip_model, clip_tokenizer, transport, batch, device, gemma3_prompt="", use_multires_loss=True, multires_factor=4):
+    def checkpointed_forward(
+        self,
+        x_B_C_T_H_W: torch.Tensor,
+        timesteps_B_T: torch.Tensor,
+        crossattn_emb: torch.Tensor,
+        fps=None,
+        padding_mask=None,
+    ):
+        # 1. 准备序列与位置编码
+        x_B_T_H_W_D, rope_emb_L_1_1_D, extra_pos_emb = self.prepare_embedded_sequence(
+            x_B_C_T_H_W,
+            fps=fps,
+            padding_mask=padding_mask,
+        )
+
+        if timesteps_B_T.ndim == 1:
+            timesteps_B_T = timesteps_B_T.unsqueeze(1)
+        
+        t_embedding_B_T_D, adaln_lora_B_T_3D = self.t_embedder(timesteps_B_T)
+        t_embedding_B_T_D = self.t_embedding_norm(t_embedding_B_T_D)
+
+        block_kwargs = {
+            "rope_emb_L_1_1_D": rope_emb_L_1_1_D,
+            "adaln_lora_B_T_3D": adaln_lora_B_T_3D,
+            "extra_per_block_pos_emb": extra_pos_emb,
+        }
+
+        # 2. 逐层应用 torch.utils.checkpoint
+        for block in self.blocks:
+            def custom_forward(x, blk=block):
+                return blk(x, t_embedding_B_T_D, crossattn_emb, **block_kwargs)
+            
+            # 使用 use_reentrant=False 是 PyTorch 新版本的推荐做法，能更好兼容 LoRA
+            x_B_T_H_W_D = checkpoint(custom_forward, x_B_T_H_W_D, use_reentrant=False)
+
+        # 3. 输出层处理
+        x_B_T_H_W_O = self.final_layer(x_B_T_H_W_D, t_embedding_B_T_D, adaln_lora_B_T_3D=adaln_lora_B_T_3D)
+        x_B_C_Tt_Hp_Wp = self.unpatchify(x_B_T_H_W_O)
+        
+        return x_B_C_Tt_Hp_Wp
+
+    # 将原有 forward 方法替换为支持 checkpoint 的版本
+    anima_model.forward = types.MethodType(checkpointed_forward, anima_model)
+    anima_model.gradient_checkpointing = True
+
+def compute_loss(model, vae, qwen_model, qwen_tokenizer, t5_tokenizer, transport, batch, device, gemma3_prompt=""):
     """计算 Rectified Flow 训练损失"""
     if batch.get("cached", False):
-        latents = batch["latents"].to(device)
-        #cap_feats = batch["cap_feats"].to(device)
-        #cap_mask = batch["cap_mask"].to(device)
-        #clip_text_pooled = batch["clip_text_pooled"].to(device)
+        latents = batch["latents"].to(device).unsqueeze(2)
         captions = batch["captions"]
-        batch_size = latents.shape[0]
     else:
         if vae is None:
             raise RuntimeError("VAE required for non-cached data")
-
         pixel_values = batch["pixel_values"].to(device)
         captions = batch["captions"]
-        batch_size = pixel_values.shape[0]
-
         with torch.no_grad():
-            latents = vae.encode(pixel_values).latent_dist.sample()
-            scaling_factor = getattr(vae.config, 'scaling_factor', 0.3611)
-            shift_factor = getattr(vae.config, 'shift_factor', 0.1159)
-            latents = (latents - shift_factor) * scaling_factor
+            vae_dtype = next(vae.model.parameters()).dtype
+            pixel_values_5d = pixel_values.unsqueeze(2).to(dtype=vae_dtype)
+            vae_scale = [s.to(device=pixel_values_5d.device) for s in vae.scale]
+            latents = vae.model.encode(pixel_values_5d, vae_scale)
 
+    bs = latents.shape[0]
+    
     with torch.no_grad():
-        # Gemma 编码
-        #gemma_texts = [gemma3_prompt + cap if gemma3_prompt else cap for cap in captions]
-        gemma_texts = [(gemma3_prompt + cap) if (gemma3_prompt and cap) else cap for cap in captions]
-        gemma_inputs = tokenizer(
-            gemma_texts, padding=True, pad_to_multiple_of=8,
-            truncation=True, max_length=1280, return_tensors="pt"
-        ).to(device)
-        gemma_outputs = text_encoder(**gemma_inputs, output_hidden_states=True)
-        cap_feats = gemma_outputs.hidden_states[-2]
-        cap_mask = gemma_inputs.attention_mask
-        # CLIP 编码
-        clip_inputs = clip_tokenizer(
-            captions, padding=True, truncation=True,
-            max_length=2048, return_tensors="pt"
-        ).to(device)
-        clip_text_pooled = clip_model.get_text_features(**clip_inputs)
-
-    model_kwargs = dict(cap_feats=cap_feats, cap_mask=cap_mask, clip_text_pooled=clip_text_pooled)
+        # 处理 Qwen 文本 (提取纯净标签)
+        qwen_texts = [_build_qwen_text_from_prompt(cap) for cap in captions]
+        # 添加全局 prompt 前缀（如果配置了 gemma3_prompt）
+        qwen_texts = [(gemma3_prompt + cap) if (gemma3_prompt and cap) else cap for cap in qwen_texts]
+        qwen_embeds, qwen_attn = encode_qwen(qwen_model, qwen_tokenizer, qwen_texts, device)
+        # 处理 T5 文本 (保留权重语法)
+        t5_texts = [(gemma3_prompt + cap) if (gemma3_prompt and cap) else cap for cap in captions]
+        t5_ids, t5_attn, t5_w = tokenize_t5_weighted(t5_tokenizer, t5_texts, max_length=512)
+        t5_ids = t5_ids.to(device)
+        # LLMAdapter 桥接
+        cross = model.preprocess_text_embeds(qwen_embeds, t5_ids)
+        if cross.shape[1] < 1024:
+            cross = torch.nn.functional.pad(cross, (0, 0, 0, 1024 - cross.shape[1]))
+        
+    pad_mask = torch.zeros(bs, 1, latents.shape[-2], latents.shape[-1], device=device, dtype=latents.dtype)
+    model_kwargs = dict(crossattn_emb=cross, padding_mask=pad_mask)
 
     ############ 损失计算 ############
     # 原始分辨率损失
     loss = transport.training_losses(model, latents, model_kwargs)["loss"].mean()
-    # 低分辨率损失
-    if use_multires_loss:
-        # 下采样 Latents
-        latents_low = apply_average_pool(latents, factor=multires_factor)
-        loss_low = transport.training_losses(model, latents_low, model_kwargs)["loss"].mean()
-        # 求和
-        loss = loss + loss_low
     return loss
 
 
@@ -697,7 +539,13 @@ def main():
 
     with open(args.config_file, 'r', encoding='utf-8') as f:
         config = toml.load(f)
-
+    
+    import models
+    from pathlib import Path
+    repo_root = str(Path(config['Model'].get('anima_repo_root', '.')).resolve())
+    if repo_root not in [str(Path(p).resolve()) for p in models.__path__]:
+        models.__path__.append(repo_root)
+    
     # 若配置缺少 Optimization 段，补默认值避免 KeyError
     opt_cfg = config.setdefault('Optimization', {})
     opt_cfg.setdefault('optimizer_type', 'AdamW')
@@ -747,8 +595,6 @@ def main():
     caption_dropout_rate = config['Model'].get('caption_dropout_rate', 0.0)
     caption_tag_dropout_rate = config['Model'].get('caption_tag_dropout_rate', 0.0)
     drop_artist_rate = config['Model'].get('drop_artist_rate', 0.0)
-    use_multires_loss = config['Model'].get('use_multires_loss', True)
-    multires_factor = config['Model'].get('multires_factor', 4)
 
     if use_cache:
         logger.info("Checking if VAE cache files exist...")
@@ -768,7 +614,7 @@ def main():
                 break
 
         logger.info("Loading encoders...")
-        vae, text_encoder, tokenizer, clip_model, clip_tokenizer = load_encoders_only(config)
+        vae, qwen_model, qwen_tokenizer, t5_tokenizer, _ = load_encoders_only(config)
 
         if not cache_complete and accelerator.is_main_process:
             logger.info("Cache incomplete, generating VAE latents...")
@@ -830,7 +676,7 @@ def main():
             drop_artist_rate=drop_artist_rate,
         )
     else:
-        model, vae, text_encoder, tokenizer, clip_model, clip_tokenizer = load_model_and_tokenizer(config)
+        model, vae, qwen_model, qwen_tokenizer, t5_tokenizer, _ = load_model_and_tokenizer(config)
 
         dataset = ImageCaptionDataset(
             train_data_dir=config['Model']['train_data_dir'],
@@ -903,13 +749,15 @@ def main():
     print_memory_usage("Before LoRA", args.profiler)
     model = setup_lora(model, config)
     model.to(accelerator.device)
-    if text_encoder: text_encoder.to(accelerator.device)
-    if vae: vae.to(accelerator.device)
-    if clip_model: clip_model.to(accelerator.device)
     print_memory_usage("After LoRA", args.profiler)
     
     if config['Model'].get('gradient_checkpointing', True):
-        model.gradient_checkpointing_enable()
+        unwrapped_model = model
+        if hasattr(unwrapped_model, "base_model"): 
+            unwrapped_model = unwrapped_model.base_model
+        if hasattr(unwrapped_model, "model"):
+            unwrapped_model = unwrapped_model.model
+        enable_anima_gradient_checkpointing(unwrapped_model)
         logger.info("Gradient checkpointing enabled")
     
     optimizer = setup_optimizer(model, config)
@@ -944,18 +792,14 @@ def main():
         clip_model.requires_grad_(False)
         print_memory_usage("After loading encoders (no cache)", args.profiler)
     """
-    if text_encoder is not None:
-        text_encoder = text_encoder.to(accelerator.device)
-        text_encoder.eval()
-        text_encoder.requires_grad_(False)
-    if clip_model is not None:
-        clip_model = clip_model.to(accelerator.device)
-        clip_model.eval()
-        clip_model.requires_grad_(False)
+    if qwen_model is not None:
+        qwen_model = qwen_model.to(accelerator.device)
+        qwen_model.eval()
+        qwen_model.requires_grad_(False)
     if vae is not None:
-        vae = vae.to(accelerator.device)
-        vae.eval()
-        vae.requires_grad_(False)
+        vae.model = vae.model.to(accelerator.device)
+        vae.model.eval()
+        vae.model.requires_grad_(False)
 
     start_step = load_checkpoint(accelerator, model, optimizer, scheduler, config, ema_model)
 
@@ -1000,6 +844,8 @@ def main():
                 train_dataloader.batch_sampler.set_epoch(epoch)
 
         epoch_losses = []
+        accumulated_loss = 0.0
+        micro_step_count = 0
         progress_bar = tqdm(
             train_dataloader,
             desc=f"Epoch {epoch+1}/{config['Model']['num_epochs']}",
@@ -1013,7 +859,6 @@ def main():
             # 判断是否是用于 Profiling 的第一个全局步（通常是第0步或断点续训的起始步）
             is_profiling_step = (global_step == start_step) and args.profiler
 
-            # 使用 accumulate 上下文
             with accelerator.accumulate(model):
                 # ================= Profiler: Before Forward =================
                 # 仅在当前累积周期的第一个微步打印
@@ -1024,20 +869,19 @@ def main():
                 loss = compute_loss(
                     model, 
                     vae, 
-                    text_encoder, 
-                    tokenizer, 
-                    clip_model, 
-                    clip_tokenizer, 
+                    qwen_model,
+                    qwen_tokenizer,
+                    t5_tokenizer,
                     transport, 
                     batch, 
                     accelerator.device, 
-                    gemma3_prompt,
-                    use_multires_loss,
-                    multires_factor
+                    gemma3_prompt
                 )
                 
-                # 记录 Loss (Accelerate 会自动处理累积步的平均，这里直接 append 即可)
+                # 记录 Loss
                 epoch_losses.append(loss.item())
+                accumulated_loss += loss.item()
+                micro_step_count += 1
 
                 # ================= Profiler: After Forward =================
                 if is_profiling_step and not has_profiled_micro_step:
@@ -1077,7 +921,8 @@ def main():
                 global_step += 1
 
                 if accelerator.is_main_process:
-                    accelerator.log({"loss": loss.item(), "learning_rate": scheduler.get_last_lr()[0]}, step=global_step)
+                    avg_step_loss = accumulated_loss / max(micro_step_count, 1)
+                    accelerator.log({"loss": avg_step_loss, "learning_rate": scheduler.get_last_lr()[0]}, step=global_step)
 
                     elapsed = datetime.now() - start_time
                     steps_in_session = global_step - session_start_step
@@ -1092,10 +937,13 @@ def main():
                     elapsed = datetime.now() - start_time
                     steps_in_session = global_step - session_start_step
                     steps_per_sec = steps_in_session / elapsed.total_seconds() if elapsed.total_seconds() > 0 else 0
-                    logger.info(f"Epoch {epoch+1}/{config['Model']['num_epochs']}, Step {global_step}/{num_training_steps}, Loss {loss.item():.4f}, LR {scheduler.get_last_lr()[0]:.7f}, Speed {steps_per_sec:.2f} steps/s")
+                    logger.info(f"Epoch {epoch+1}/{config['Model']['num_epochs']}, Step {global_step}/{num_training_steps}, Loss {avg_step_loss:.4f}, LR {scheduler.get_last_lr()[0]:.7f}, Speed {steps_per_sec:.2f} steps/s")
 
                 if global_step % 1000 == 0:
                     save_checkpoint(accelerator, model, optimizer, scheduler, global_step, config, ema_model)
+
+                accumulated_loss = 0.0
+                micro_step_count = 0
 
         avg_epoch_loss = sum(epoch_losses) / len(epoch_losses) if epoch_losses else 0.0
         logger.info(f"Epoch {epoch+1}/{config['Model']['num_epochs']} completed - Average Loss: {avg_epoch_loss:.4f}")
