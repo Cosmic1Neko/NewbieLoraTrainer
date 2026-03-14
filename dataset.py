@@ -806,7 +806,7 @@ class DPODataset(Dataset):
                 }
             except Exception as e:
                 logger.error(f"Error loading cache for {idx}: {e}")
-                dummy = torch.zeros((4, h // 8, w // 8))
+                dummy = torch.zeros((4, target_h // 8, target_w // 8))
                 return {"latents_chosen": dummy, "latents_rejected": dummy, "caption": "", "cached": True}
         else:
             try:
