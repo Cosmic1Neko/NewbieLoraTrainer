@@ -397,7 +397,8 @@ def compute_loss(model, vae, qwen_model, qwen_tokenizer, t5_tokenizer, transport
         t5_ids, t5_attn, t5_w = tokenize_t5_weighted(t5_tokenizer, t5_texts, max_length=512)
         t5_ids = t5_ids.to(device)
         # LLMAdapter 桥接
-        cross = model.preprocess_text_embeds(qwen_embeds, t5_ids)
+        unwrapped_model = model.module if hasattr(model, "module") else model
+        cross = unwrapped_model.preprocess_text_embeds(qwen_embeds, t5_ids)
         if cross.shape[1] < 1024:
             cross = torch.nn.functional.pad(cross, (0, 0, 0, 1024 - cross.shape[1]))
         
@@ -556,7 +557,7 @@ def main():
     output_dir = config['Model']['output_dir']    
     os.makedirs(output_dir, exist_ok=True)
 
-    ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=False)
+    ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
     accelerator = Accelerator(
         mixed_precision=config['Model'].get('mixed_precision', 'no'),
         gradient_accumulation_steps=gradient_accumulation_steps,
@@ -571,7 +572,7 @@ def main():
             **config['Optimization']
         }
         accelerator.init_trackers(
-            project_name="Newbie_LoRA", # 或者从 config 中读取
+            project_name="Anima_LoRA",
             config=tracker_config,
             init_kwargs={"wandb": {"name": config['Model'].get('output_name', 'run')}} # 设置本次运行的名称
         )
@@ -844,6 +845,8 @@ def main():
                 train_dataloader.batch_sampler.set_epoch(epoch)
 
         epoch_losses = []
+        accumulated_loss = 0.0
+        micro_step_count = 0
         progress_bar = tqdm(
             train_dataloader,
             desc=f"Epoch {epoch+1}/{config['Model']['num_epochs']}",
@@ -876,8 +879,10 @@ def main():
                     gemma3_prompt
                 )
                 
-                # 记录 Loss (Accelerate 会自动处理累积步的平均，这里直接 append 即可)
+                # 记录 Loss
                 epoch_losses.append(loss.item())
+                accumulated_loss += loss.item()
+                micro_step_count += 1
 
                 # ================= Profiler: After Forward =================
                 if is_profiling_step and not has_profiled_micro_step:
@@ -917,7 +922,8 @@ def main():
                 global_step += 1
 
                 if accelerator.is_main_process:
-                    accelerator.log({"loss": loss.item(), "learning_rate": scheduler.get_last_lr()[0]}, step=global_step)
+                    avg_step_loss = accumulated_loss / max(micro_step_count, 1)
+                    accelerator.log({"loss": avg_step_loss, "learning_rate": scheduler.get_last_lr()[0]}, step=global_step)
 
                     elapsed = datetime.now() - start_time
                     steps_in_session = global_step - session_start_step
@@ -932,10 +938,13 @@ def main():
                     elapsed = datetime.now() - start_time
                     steps_in_session = global_step - session_start_step
                     steps_per_sec = steps_in_session / elapsed.total_seconds() if elapsed.total_seconds() > 0 else 0
-                    logger.info(f"Epoch {epoch+1}/{config['Model']['num_epochs']}, Step {global_step}/{num_training_steps}, Loss {loss.item():.4f}, LR {scheduler.get_last_lr()[0]:.7f}, Speed {steps_per_sec:.2f} steps/s")
+                    logger.info(f"Epoch {epoch+1}/{config['Model']['num_epochs']}, Step {global_step}/{num_training_steps}, Loss {avg_step_loss:.4f}, LR {scheduler.get_last_lr()[0]:.7f}, Speed {steps_per_sec:.2f} steps/s")
 
                 if global_step % 1000 == 0:
                     save_checkpoint(accelerator, model, optimizer, scheduler, global_step, config, ema_model)
+
+                accumulated_loss = 0.0
+                micro_step_count = 0
 
         avg_epoch_loss = sum(epoch_losses) / len(epoch_losses) if epoch_losses else 0.0
         logger.info(f"Epoch {epoch+1}/{config['Model']['num_epochs']} completed - Average Loss: {avg_epoch_loss:.4f}")
