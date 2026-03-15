@@ -121,7 +121,7 @@ class Transport:
 
         if self.do_shift:
             base_shift: float = 0.5
-            max_shift: float = 1.15
+            max_shift: float = 3.0
             if isinstance(x1, (list, tuple)):
                 h, w = x1[0].shape[-2:]
             else:
