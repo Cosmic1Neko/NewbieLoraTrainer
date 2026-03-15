@@ -131,7 +131,7 @@ class Transport:
             t = self.time_shift(mu, 1.0, t)
         
         t = t.to(x1[0])
-        return t, x0, x1
+        return t, x1, x0
 
     def time_shift(self, mu: float, sigma: float, t: th.Tensor):
         # the following implementation was original for t=0: clean / t=1: noise
@@ -158,11 +158,11 @@ class Transport:
         if model_kwargs == None:
             model_kwargs = {}
         t, x0, x1 = self.sample(x1)
-        t, xt, ut = self.path_sampler.plan(t, x1, x0)
+        t, xt, ut = self.path_sampler.plan(t, x0, x1)
         if "cond" in model_kwargs:
             conds = model_kwargs.pop("cond")
             xt = [th.cat([x, cond], dim=0) if cond is not None else x for x, cond in zip(xt, conds)]
-        model_output = model(xt, 1.0 - t, **model_kwargs)
+        model_output = model(xt, t, **model_kwargs)
         B = len(x0)
 
         terms = {}
@@ -185,7 +185,7 @@ class Transport:
 
         terms["loss"] = terms["task_loss"]
         terms["task_loss"] = terms["task_loss"].clone().detach()
-        terms["t"] = 1.0 - t
+        terms["t"] = t
         return terms
 
     def get_drift(self):
@@ -264,8 +264,8 @@ class Transport:
 
         # 2. 路径规划：为 chosen 和 rejected 图片生成相同的 xt (插值点) 和 ut (目标速度) 
         # ut 在 VELOCITY 模式下代表目标速度 (x1 - x0)
-        _, xt_w, ut_w = self.path_sampler.plan(t, x1_chosen, x0)
-        _, xt_l, ut_l = self.path_sampler.plan(t, x1_rejected, x0)
+        _, xt_w, ut_w = self.path_sampler.plan(t, x0, x1_chosen)
+        _, xt_l, ut_l = self.path_sampler.plan(t, x0, x1_rejected)
 
         # 3. 前向预测
         """
