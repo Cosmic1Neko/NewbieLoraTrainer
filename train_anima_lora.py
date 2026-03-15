@@ -939,7 +939,7 @@ def main():
                     steps_per_sec = steps_in_session / elapsed.total_seconds() if elapsed.total_seconds() > 0 else 0
                     logger.info(f"Epoch {epoch+1}/{config['Model']['num_epochs']}, Step {global_step}/{num_training_steps}, Loss {avg_step_loss:.4f}, LR {scheduler.get_last_lr()[0]:.7f}, Speed {steps_per_sec:.2f} steps/s")
 
-                if global_step % 1000 == 0:
+                if accelerator.is_main_process & global_step % 1000 == 0:
                     save_checkpoint(accelerator, model, optimizer, scheduler, global_step, config, ema_model)
 
                 accumulated_loss = 0.0
@@ -948,7 +948,7 @@ def main():
         avg_epoch_loss = sum(epoch_losses) / len(epoch_losses) if epoch_losses else 0.0
         logger.info(f"Epoch {epoch+1}/{config['Model']['num_epochs']} completed - Average Loss: {avg_epoch_loss:.4f}")
 
-        if save_epochs_interval == 0 or (epoch + 1) % save_epochs_interval == 0:
+        if accelerator.is_main_process and save_epochs_interval > 0 and (epoch + 1) % save_epochs_interval == 0:
             save_checkpoint(accelerator, model, optimizer, scheduler, global_step, config, ema_model)
             logger.info(f"Checkpoint saved at epoch {epoch+1}")
 
