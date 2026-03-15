@@ -197,7 +197,7 @@ def setup_lora(model, config):
             use_rslora=use_rslora,
             rank_pattern=rank_pattern,
             alpha_pattern=alpha_pattern,
-            exclude_modules=["llm_adapter"],
+            exclude_modules="llm_adapter.*",
         )
         
         peft_model = get_peft_model(model, lora_config, low_cpu_mem_usage=False)
@@ -939,7 +939,7 @@ def main():
                     steps_per_sec = steps_in_session / elapsed.total_seconds() if elapsed.total_seconds() > 0 else 0
                     logger.info(f"Epoch {epoch+1}/{config['Model']['num_epochs']}, Step {global_step}/{num_training_steps}, Loss {avg_step_loss:.4f}, LR {scheduler.get_last_lr()[0]:.7f}, Speed {steps_per_sec:.2f} steps/s")
 
-                if accelerator.is_main_process & global_step % 1000 == 0:
+                if accelerator.is_main_process and global_step % 100 == 0:
                     save_checkpoint(accelerator, model, optimizer, scheduler, global_step, config, ema_model)
 
                 accumulated_loss = 0.0
