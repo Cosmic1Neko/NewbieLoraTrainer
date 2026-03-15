@@ -162,7 +162,7 @@ class Transport:
         if "cond" in model_kwargs:
             conds = model_kwargs.pop("cond")
             xt = [th.cat([x, cond], dim=0) if cond is not None else x for x, cond in zip(xt, conds)]
-        model_output = -model(xt, t, **model_kwargs)
+        model_output = model(xt, 1.0 - t, **model_kwargs)
         B = len(x0)
 
         terms = {}
@@ -185,7 +185,7 @@ class Transport:
 
         terms["loss"] = terms["task_loss"]
         terms["task_loss"] = terms["task_loss"].clone().detach()
-        terms["t"] = t
+        terms["t"] = 1.0 - t
         return terms
 
     def get_drift(self):
