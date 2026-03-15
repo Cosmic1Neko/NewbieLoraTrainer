@@ -24,11 +24,11 @@ class ICPlan:
 
     def compute_alpha_t(self, t):
         """Compute the data coefficient along the path"""
-        return t, 1
+        return 1 - t, -1
 
     def compute_sigma_t(self, t):
         """Compute the noise coefficient along the path"""
-        return 1 - t, -1
+        return t, 1
 
     def compute_d_alpha_alpha_ratio_t(self, t):
         """Compute the ratio between d_alpha and alpha"""
