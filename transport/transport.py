@@ -131,14 +131,14 @@ class Transport:
             t = self.time_shift(mu, 1.0, t)
         
         t = t.to(x1[0])
-        return t, x1, x0
+        return t, x0, x1
 
     def time_shift(self, mu: float, sigma: float, t: th.Tensor):
         # the following implementation was original for t=0: clean / t=1: noise
         # Since we adopt the reverse, the 1-t operations are needed
-        t = 1 - t
+        #t = 1 - t
         t = math.exp(mu) / (math.exp(mu) + (1 / t - 1) ** sigma)
-        t = 1 - t
+        #t = 1 - t
         return t
 
     def get_lin_function(
