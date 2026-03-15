@@ -920,9 +920,8 @@ def main():
             # 4. 更新 Global Step 和 日志 (仅在同步步执行)
             if accelerator.sync_gradients:
                 global_step += 1
-
+                avg_step_loss = accumulated_loss / max(micro_step_count, 1)
                 if accelerator.is_main_process:
-                    avg_step_loss = accumulated_loss / max(micro_step_count, 1)
                     accelerator.log({"loss": avg_step_loss, "learning_rate": scheduler.get_last_lr()[0]}, step=global_step)
 
                     elapsed = datetime.now() - start_time
