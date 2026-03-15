@@ -629,7 +629,7 @@ class DPODataset(Dataset):
         logger.info(f"DPO Buckets found: {list(self.bucket_to_indices.keys())}")
 
         if self.use_cache and vae is not None:
-            self._prepare_cache(vae, device)
+            self._prepare_cache()
 
     def _prepare_cache(self):
         """扫描并生成 VAE Latents 缓存"""
