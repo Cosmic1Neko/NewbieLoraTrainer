@@ -394,7 +394,7 @@ def compute_loss(model, vae, qwen_model, qwen_tokenizer, t5_tokenizer, transport
         qwen_embeds, qwen_attn = encode_qwen(qwen_model, qwen_tokenizer, qwen_texts, device)
         # 处理 T5 文本 (保留权重语法)
         t5_texts = [(gemma3_prompt + cap) if (gemma3_prompt and cap) else cap for cap in captions]
-        t5_ids, t5_attn, t5_w = tokenize_t5_weighted(t5_tokenizer, t5_texts, max_length=512)
+        t5_ids, t5_attn, t5_w = tokenize_t5_weighted(t5_tokenizer, t5_texts, max_length=1024)
         t5_ids = t5_ids.to(device)
         # LLMAdapter 桥接
         unwrapped_model = model.module if hasattr(model, "module") else model
@@ -557,7 +557,7 @@ def main():
     output_dir = config['Model']['output_dir']    
     os.makedirs(output_dir, exist_ok=True)
 
-    ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
+    ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=False)
     accelerator = Accelerator(
         mixed_precision=config['Model'].get('mixed_precision', 'no'),
         gradient_accumulation_steps=gradient_accumulation_steps,
