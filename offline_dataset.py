@@ -1,7 +1,7 @@
 """
 python offline_dataset.py \
   --config_file lora.toml \
-  --lora_path /root/autodl-tmp/output_ema/NewBieLoRA-1280px_step_5866_ema \
+  --lora_path /root/autodl-tmp/output_ema/AnimaLoRA_step_1000 \
   --output_dir /root/autodl-tmp/gen_dataset \
   --num_samples 2 \
   --steps 25 \
@@ -23,10 +23,13 @@ import numpy as np
 
 # 导入仓库组件
 from dataset import ImageCaptionDataset, collate_fn
-from train_newbie_lora import load_model_and_tokenizer, setup_lora
-from peft import set_peft_model_state_dict
-from safetensors.torch import load_file
-from transport import create_transport
+from train_anima_lora import (
+    load_model_and_tokenizer, 
+    setup_lora, 
+    _build_qwen_text_from_prompt, 
+    encode_qwen, 
+    tokenize_t5_weighted
+)
 from diffusers.schedulers import FlowMatchEulerDiscreteScheduler
 
 def parse_args():
@@ -140,36 +143,26 @@ def main():
 
     # 4. 预计算无条件特征 (用于 CFG)
     print("预计算负向 (Unconditional) 特征...")
-    # Gemma 无条件
-    uncond_input = tokenizer(
-        ["You are an assistant designed to generate high-quality anime images with the highest degree of image-text alignment based on textual prompts. <Prompt Start>\n"], 
-        padding="max_length", pad_to_multiple_of=8,
-        truncation=True, max_length=1280, return_tensors="pt"
-    ).to(args.device)
-    with torch.no_grad():
-        uncond_outputs = text_encoder(**uncond_input, output_hidden_states=True)
-        uncond_cap_feats = uncond_outputs.hidden_states[-2].to(dtype=torch.bfloat16)
-        uncond_cap_mask = uncond_input.attention_mask
-    # CLIP 无条件
-    uncond_clip_input = clip_tokenizer(
-        ["You are an assistant designed to generate high-quality anime images with the highest degree of image-text alignment based on textual prompts. <Prompt Start>\n"], 
-        padding=True, truncation=True,
-        max_length=2048, return_tensors="pt"
-    ).to(args.device)
-    with torch.no_grad():
-        uncond_clip_text_pooled = clip_model.get_text_features(**uncond_clip_input).to(dtype=torch.bfloat16)
+    uncond_prompt = ""
+    u_qwen_text = _build_qwen_text_from_prompt(uncond_prompt)
+    u_qwen_embeds, _ = encode_qwen(qwen_model, qwen_tokenizer, [u_qwen_text], args.device)
+    u_t5_ids, _, _ = tokenize_t5_weighted(t5_tokenizer, [uncond_prompt], max_length=1024)
+    unwrapped_model = model.module if hasattr(model, "module") else model
+    if hasattr(unwrapped_model, "base_model"): unwrapped_model = unwrapped_model.base_model.model
+    uncond_cross = unwrapped_model.preprocess_text_embeds(u_qwen_embeds, u_t5_ids.to(args.device))
+    if uncond_cross.shape[1] < 1024:
+        uncond_cross = torch.nn.functional.pad(uncond_cross, (0, 0, 0, 1024 - uncond_cross.shape[1]))
 
     # 5. 开始生成循环
     results = []
     gemma3_prompt = config['Model'].get('gemma3_prompt', "")
-    scaling_factor = getattr(vae.config, 'scaling_factor', 0.3611)
-    shift_factor = getattr(vae.config, 'shift_factor', 0.1159)
+    vae_scale = [s.to(device=args.device, dtype=torch.bfloat16) for s in vae.scale] # [scale, shift]
  
     print(f"开始为 {len(target_indices)} 个原始样本生成偏好对池...")
 
     batch_size = args.num_samples # args.num_samples
     
-    for i in tqdm(target_indices, desc="Processing Images"):
+    for i in tqdm(target_indices, desc="Generating"):
         img_path = dataset.image_paths[i]
         raw_caption = dataset.captions[i]
         target_width, target_height = dataset.image_to_bucket[i]
@@ -189,36 +182,16 @@ def main():
           # 准备编码特征
           with torch.no_grad():
             # 编码正向特征
-            gemma_text = gemma3_prompt + caption
-            pos_input = tokenizer([gemma_text], padding="longest", pad_to_multiple_of=8,
-                truncation=True, max_length=1280, return_tensors="pt"
-            ).to(args.device)
-            current_seq_len = pos_input.input_ids.shape[1]
-            pos_outputs = text_encoder(**pos_input, output_hidden_states=True)
-            pos_cap_feats = pos_outputs.hidden_states[-2].to(dtype=torch.bfloat16)
-            pos_cap_mask = pos_input.attention_mask
-            
-            pos_clip_input = clip_tokenizer(
-                [caption], padding=True, truncation=True,
-                max_length=2048, return_tensors="pt"
-            ).to(args.device)
-            pos_clip_text_pooled = clip_model.get_text_features(**pos_clip_input).to(dtype=torch.bfloat16)
+            full_prompt = gemma3_prompt + caption
+            p_qwen_text = _build_qwen_text_from_prompt(full_prompt)
+            p_qwen_embeds, _ = encode_qwen(qwen_model, qwen_tokenizer, [p_qwen_text], args.device)
+            p_t5_ids, _, _ = tokenize_t5_weighted(t5_tokenizer, [full_prompt], max_length=1024)
+            pos_cross = unwrapped_model.preprocess_text_embeds(p_qwen_embeds, p_t5_ids.to(args.device))
+            if pos_cross.shape[1] < 1024:
+                pos_cross = torch.nn.functional.pad(pos_cross, (0, 0, 0, 1024 - pos_cross.shape[1]))
 
-            # 1. 重复 uncond 特征 N 次
-            batch_uncond_feats = uncond_cap_feats.repeat(batch_size, 1, 1)[:, :current_seq_len, :]
-            batch_uncond_mask = uncond_cap_mask.repeat(batch_size, 1)[:, :current_seq_len]
-            batch_uncond_pooled = uncond_clip_text_pooled.repeat(batch_size, 1)
-
-            # 2. 重复 cond 特征 N 次
-            batch_pos_feats = pos_cap_feats.repeat(batch_size, 1, 1)
-            batch_pos_mask = pos_cap_mask.repeat(batch_size, 1)
-            batch_pos_pooled = pos_clip_text_pooled.repeat(batch_size, 1)
-
-            # 3. 拼接 (Concat) -> 形状变成 [2*N, Seq, Dim]
-            cat_cap_feats = torch.cat([batch_uncond_feats, batch_pos_feats])
-            cat_cap_mask = torch.cat([batch_uncond_mask, batch_pos_mask])
-            cat_clip_pooled = torch.cat([batch_uncond_pooled, batch_pos_pooled])
-
+            # 准备批次特征 (Concat CFG)
+            batch_cross = torch.cat([uncond_cross.repeat(args.num_samples, 1, 1), pos_cross.repeat(args.num_samples, 1, 1)])
             ######################################################################
             # 1. 初始化 Scheduler
             scheduler = FlowMatchEulerDiscreteScheduler(num_train_timesteps=1000, shift=6.0)
@@ -229,31 +202,29 @@ def main():
                     
             # 3. 采样循环
             for t in scheduler.timesteps:
-                t_norm = t / 1000.0
-                t_model = 1.0 - t_norm
-                t_tensor = torch.full((batch_size * 2,), t_model, device=args.device, dtype=torch.bfloat16)
+                t_tensor = torch.full((args.num_samples * 2,), (1.0 - t / 1000.0), device=args.device, dtype=torch.bfloat16)
 
                 # Forward
                 v_pred = model(
                     torch.cat([latents, latents]), 
                     t_tensor, 
-                    cap_feats=cat_cap_feats, 
-                    cap_mask=cat_cap_mask, 
-                    clip_text_pooled=cat_clip_pooled
+                    crossattn_emb=batch_cross,
+                    padding_mask=torch.zeros(args.num_samples * 2, 1, latents.shape[-2], latents.shape[-1], 
+                                             device=args.device, dtype=torch.bfloat16)
                 )
                         
                 # 拆分预测速度 v 并进行 CFG 混合
                 v_uncond, v_cond = v_pred.chunk(2)
                 v_final = v_uncond + args.cfg_scale * (v_cond - v_uncond)
-                        
                 # 使用 Scheduler 步进更新噪声，注意取反以适配积分方向
                 latents = scheduler.step(-v_final, t, latents).prev_sample
                 
             # 4. VAE 解码
-            latents = (latents / scaling_factor) + shift_factor
-            image = vae.decode(latents.to(vae.dtype)).sample
-            image = (image / 2 + 0.5).clamp(0, 1)
-            image = image.cpu().permute(0, 2, 3, 1).float().numpy()
+            with torch.no_grad():
+                decoded = vae.model.decode(latents, vae.scale) 
+                decoded = decoded.squeeze(2) 
+                decoded = (decoded.clamp(-1, 1) + 1) / 2
+                images = decoded.cpu().permute(0, 2, 3, 1).float().numpy()
                 
             # 保存图片
             gen_paths = []
