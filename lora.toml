@@ -1,22 +1,20 @@
 [Model]
 #模型加载路径，填写clip_model、text_encoder、transformer、vae、model_index.json所在的文件夹路径
-anima_repo_root = "/root/NewbieLoraTrainer/AnimaLoraToolkit/models" 
-transformer_path = "/root/autodl-tmp/Anima/anima-preview2.safetensors"
-vae_path = "/root/autodl-tmp/Anima/qwen_image_vae.safetensors"
-qwen_model_path = "/root/autodl-tmp/Anima/qwen_3_06b"
-t5_tokenizer_path = "/root/autodl-tmp/Anima/t5_tokenizer" 
+base_model_path = "/root/autodl-tmp/NewBie"
+# vae是否使用"reflect"的padding模式，适用于在该参数下训练的vae
+vae_reflect_padding = true
 
 # 是否信任远程代码（Gemma 和 CLIP 模型需要）
 trust_remote_code = true
 
 # 训练输出目录
-output_dir = "/root/autodl-tmp/output"
+output_dir = "/root/autodl-tmp/output_ema"
 
 # 输出的 LoRA 模型名称（最终保存为 output_dir/output_name/）
-output_name = "AnimaLoRA"
+output_name = "NewBieLoRA-1280px"
 
 # 是否加载预训练的 LoRA 文件（绝对路径）
-resume_from_lora = ""
+resume_from_lora = "/root/autodl-tmp/output/NewBieLoRA"
 
 # 是否启用 EMA (指数移动平均)
 use_ema = true
@@ -34,10 +32,10 @@ ema_decay = 0.999
 train_data_dir = "/root/autodl-tmp/datasets"
 
 # 训练图像分辨率
-resolution = 1024
+resolution = 1280
 # 图像分箱参数
-min_bucket_reso = 384
-max_bucket_reso = 1920
+min_bucket_reso = 512
+max_bucket_reso = 3072
 bucket_reso_step = 64
 # 是否打乱tag
 shuffle_caption = true
@@ -49,7 +47,15 @@ caption_dropout_rate = 0.1
 # 随机丢弃tag的概率
 caption_tag_dropout_rate = 0
 # 随机丢弃artist标签的概率
-drop_artist_rate = 0.1
+drop_artist_rate = 0.0
+
+# 是否启用多分辨率损失 (Multi-Resolution Loss)
+# true: 在原始分辨率和下采样后的分辨率上同时计算 Loss，有助于学习全局结构
+# false: 仅在原始分辨率计算 Loss，节省显存和计算量
+use_multires_loss = false
+
+# 多分辨率下采样的倍率
+multires_factor = 4
 
 # DataLoader 工作线程数
 dataloader_num_workers = 8
@@ -63,7 +69,10 @@ enable_bucket = true
 # true: 预先缓存 VAE latents, 加速训练并节省显存
 # false: 每次实时编码（慢，但不占用磁盘空间）
 # 缓存文件保存在数据集同目录：图片.safetensors,
-use_cache = false
+use_cache = true
+
+# Gemma3 系统提示词（仅用于 Gemma3，不影响 Jina CLIP）
+gemma3_prompt = "You are an assistant designed to generate high-quality anime images with the highest degree of image-text alignment based on textual prompts. <Prompt Start>\n"
 
 # wandb的api key, 用于查看训练损失与过程 
 wandb_key = ""
@@ -72,10 +81,10 @@ wandb_key = ""
 # 训练超参数
 # =============================================================================
 # 批次大小（每次前向传播处理的图像数量）
-train_batch_size = 2
+train_batch_size = 1
 
 # 训练轮数（遍历整个数据集的次数）
-num_epochs = 15
+num_epochs = 5
 
 # Checkpoint 保存间隔（按 Epoch）
 # 每隔多少个 epoch 保存一次检查点
@@ -88,19 +97,19 @@ learning_rate = 1e-4
 
 # 学习率调度器（控制学习率在训练过程中的变化）
 # 可选值：
-#   - "constant": 恒定学习率，不变化
+#   - "constant_with_warmup": 恒定学习率，不变化
 #   - "cosine": 余弦退火，推荐，平滑下降
 #   - "linear": 线性衰减
 #   - "cosine_with_restarts": 带重启的余弦，用于长时间训练
 lr_scheduler = "constant_with_warmup"
 
 # 学习率预热步数
-lr_warmup_steps = 500
+lr_warmup_steps = 100
 
 # 梯度检查点
 gradient_checkpointing = true
 # 梯度累积
-gradient_accumulation_steps = 4
+gradient_accumulation_steps = 16
 
 # 混合精度训练
 # 可选值：
@@ -114,7 +123,7 @@ mixed_precision = "bf16"
 # LoRA 配置
 # =============================================================================
 # LoRA rank（秩）
-lora_rank = 128
+lora_rank = 96
 
 # LoRA alpha
 # 使用rslora时建议固定
@@ -141,30 +150,18 @@ use_rslora = true
 # LoRA 目标模块配置
 # =============================================================================
 lora_target_modules = [
-    "q_proj",
-    "k_proj",
-    "v_proj",
-    "output_proj",
-
-    "mlp.layer1",
-    "mlp.layer2",
-
-    "adaln_modulation_cross_attn.1",
-    "adaln_modulation_cross_attn.2",
-
-    "adaln_modulation_self_attn.1",
-    "adaln_modulation_self_attn.2",
-
-    "adaln_modulation_mlp.1",
-    "adaln_modulation_mlp.2",
-    
-    "t_embedder.1.linear",
-    "out_proj",
+    "attention.qkv",           
+    "attention.out",
+    "feed_forward.w1",
+    "feed_forward.w2",
+    "feed_forward.w3",
+    "adaLN_modulation.1",
+    "cap_embedder.1",
+    "t_embedder.mlp.0",
+    "t_embedder.mlp.2",
+    "time_text_embed.1",
+    "clip_text_pooled_proj.1", 
 ]
-
-lora_rank_pattern = {"adaln_modulation.*" = 32}
-lora_alpha_pattern = {"adaln_modulation.*" = 8}
-
 # =============================================================================
 # 优化器配置
 # =============================================================================
