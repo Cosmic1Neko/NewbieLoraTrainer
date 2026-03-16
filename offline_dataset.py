@@ -104,7 +104,7 @@ def main():
 
     # 2. 加载模型与 LoRA
     # 注意：生成需要完整的 VAE 和 Text Encoder
-    model, vae, text_encoder, tokenizer, clip_model, clip_tokenizer = load_model_and_tokenizer(config)
+    model, vae, qwen_model, qwen_tokenizer, t5_tokenizer, _ = load_model_and_tokenizer(config)
     
     # 应用 LoRA
     if os.path.isdir(args.lora_path):
@@ -118,9 +118,8 @@ def main():
         model = setup_lora(model, config)
     
     model.to(args.device, dtype=torch.bfloat16).eval()
-    vae.to(args.device, dtype=torch.bfloat16).eval()
-    text_encoder.to(args.device, dtype=torch.bfloat16).eval()
-    clip_model.to(args.device, dtype=torch.bfloat16).eval()
+    vae.model.to(args.device, dtype=torch.bfloat16).eval()
+    qwen_model.to(args.device, dtype=torch.bfloat16).eval()
 
     print("Compiling model...")
     model = torch.compile(model, mode="default", fullgraph=False, dynamic=True) # "reduce-overhead"
