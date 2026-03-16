@@ -85,6 +85,12 @@ def main():
     # 1. 加载配置
     with open(args.config_file, 'r', encoding='utf-8') as f:
         config = toml.load(f)
+
+    import models
+    from pathlib import Path
+    repo_root = str(Path(config['Model'].get('anima_repo_root', '.')).resolve())
+    if repo_root not in [str(Path(p).resolve()) for p in models.__path__]:
+        models.__path__.append(repo_root)
     
     # 关闭数据增强部分以保证数据对应关系
     config['Model']['shuffle_caption'] = False
