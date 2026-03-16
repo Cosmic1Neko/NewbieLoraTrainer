@@ -368,7 +368,7 @@ def enable_anima_gradient_checkpointing(anima_model):
     anima_model.forward = types.MethodType(checkpointed_forward, anima_model)
     anima_model.gradient_checkpointing = True
 
-def compute_loss(model, vae, qwen_model, qwen_tokenizer, t5_tokenizer, transport, batch, device, gemma3_prompt=""):
+def compute_loss(model, vae, qwen_model, qwen_tokenizer, t5_tokenizer, transport, batch, device):
     """计算 Rectified Flow 训练损失"""
     if batch.get("cached", False):
         latents = batch["latents"].to(device).unsqueeze(2)
@@ -379,22 +379,17 @@ def compute_loss(model, vae, qwen_model, qwen_tokenizer, t5_tokenizer, transport
         pixel_values = batch["pixel_values"].to(device)
         captions = batch["captions"]
         with torch.no_grad():
-            vae_dtype = next(vae.model.parameters()).dtype
-            pixel_values_5d = pixel_values.unsqueeze(2).to(dtype=vae_dtype)
-            vae_scale = [s.to(device=pixel_values_5d.device) for s in vae.scale]
-            latents = vae.model.encode(pixel_values_5d, vae_scale)
+            pixel_values_5d = pixel_values.unsqueeze(2).to(dtype=next(vae.model.parameters()).dtype)
+            latents = vae.model.encode(pixel_values_5d, vae.scale)
 
     bs = latents.shape[0]
     
     with torch.no_grad():
         # 处理 Qwen 文本 (提取纯净标签)
         qwen_texts = [_build_qwen_text_from_prompt(cap) for cap in captions]
-        # 添加全局 prompt 前缀（如果配置了 gemma3_prompt）
-        qwen_texts = [(gemma3_prompt + cap) if (gemma3_prompt and cap) else cap for cap in qwen_texts]
         qwen_embeds, qwen_attn = encode_qwen(qwen_model, qwen_tokenizer, qwen_texts, device)
         # 处理 T5 文本 (保留权重语法)
-        t5_texts = [(gemma3_prompt + cap) if (gemma3_prompt and cap) else cap for cap in captions]
-        t5_ids, t5_attn, t5_w = tokenize_t5_weighted(t5_tokenizer, t5_texts, max_length=1024)
+        t5_ids, t5_attn, t5_w = tokenize_t5_weighted(t5_tokenizer, captions, max_length=1024)
         t5_ids = t5_ids.to(device)
         # LLMAdapter 桥接
         unwrapped_model = model.module if hasattr(model, "module") else model
@@ -585,7 +580,6 @@ def main():
     use_cache = config['Model'].get('use_cache', True)
     mixed_precision = config['Model'].get('mixed_precision', 'no')
     cache_dtype = torch.bfloat16 if mixed_precision == 'bf16' else (torch.float16 if mixed_precision == 'fp16' else torch.float32)
-    gemma3_prompt = config['Model'].get('gemma3_prompt', '')
     resolution = config['Model']['resolution']
     min_bucket_reso = config['Model'].get('min_bucket_reso', 256)
     max_bucket_reso = config['Model'].get('max_bucket_reso', 2048)
@@ -616,6 +610,7 @@ def main():
 
         logger.info("Loading encoders...")
         vae, qwen_model, qwen_tokenizer, t5_tokenizer, _ = load_encoders_only(config)
+        vae.scale = [s.to(device=accelerator.device, dtype=next(vae.model.parameters()).dtype) for s in vae.scale]
 
         if not cache_complete and accelerator.is_main_process:
             logger.info("Cache incomplete, generating VAE latents...")
@@ -631,7 +626,6 @@ def main():
                 clip_tokenizer=None,
                 device=accelerator.device,
                 dtype=cache_dtype,
-                gemma3_prompt=gemma3_prompt,
                 min_bucket_reso=min_bucket_reso,
                 max_bucket_reso=max_bucket_reso,
                 bucket_reso_step=bucket_reso_step,
@@ -665,7 +659,6 @@ def main():
             clip_tokenizer=None,
             device=accelerator.device,
             dtype=cache_dtype,
-            gemma3_prompt=gemma3_prompt,
             min_bucket_reso=min_bucket_reso,
             max_bucket_reso=max_bucket_reso,
             bucket_reso_step=bucket_reso_step,
@@ -678,6 +671,7 @@ def main():
         )
     else:
         model, vae, qwen_model, qwen_tokenizer, t5_tokenizer, _ = load_model_and_tokenizer(config)
+        vae.scale = [s.to(device=accelerator.device, dtype=next(vae.model.parameters()).dtype) for s in vae.scale]
 
         dataset = ImageCaptionDataset(
             train_data_dir=config['Model']['train_data_dir'],
@@ -691,7 +685,6 @@ def main():
             clip_tokenizer=None,
             device=accelerator.device,
             dtype=cache_dtype,
-            gemma3_prompt=gemma3_prompt,
             min_bucket_reso=min_bucket_reso,
             max_bucket_reso=max_bucket_reso,
             bucket_reso_step=bucket_reso_step,
@@ -750,6 +743,15 @@ def main():
     print_memory_usage("Before LoRA", args.profiler)
     model = setup_lora(model, config)
     model.to(accelerator.device)
+    if qwen_model is not None:
+        qwen_model = qwen_model.to(accelerator.device)
+        qwen_model.eval()
+        qwen_model.requires_grad_(False)
+    if vae is not None:
+        vae.model = vae.model.to(accelerator.device)
+        vae.scale = [s.to(device=accelerator.device, dtype=next(vae.model.parameters()).dtype) for s in vae.scale]
+        vae.model.eval()
+        vae.model.requires_grad_(False)
     print_memory_usage("After LoRA", args.profiler)
     
     if config['Model'].get('gradient_checkpointing', True):
@@ -793,14 +795,6 @@ def main():
         clip_model.requires_grad_(False)
         print_memory_usage("After loading encoders (no cache)", args.profiler)
     """
-    if qwen_model is not None:
-        qwen_model = qwen_model.to(accelerator.device)
-        qwen_model.eval()
-        qwen_model.requires_grad_(False)
-    if vae is not None:
-        vae.model = vae.model.to(accelerator.device)
-        vae.model.eval()
-        vae.model.requires_grad_(False)
 
     start_step = load_checkpoint(accelerator, model, optimizer, scheduler, config, ema_model)
 
@@ -876,7 +870,6 @@ def main():
                     transport, 
                     batch, 
                     accelerator.device, 
-                    gemma3_prompt
                 )
                 
                 # 记录 Loss
