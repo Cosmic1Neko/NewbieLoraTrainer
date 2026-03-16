@@ -1,7 +1,7 @@
 """
 python offline_dataset.py \
   --config_file lora.toml \
-  --lora_path /root/autodl-tmp/output_ema/AnimaLoRA_step_1000 \
+  --lora_path /root/autodl-tmp/output/AnimaLoRA_step_1000 \
   --output_dir /root/autodl-tmp/gen_dataset \
   --num_samples 2 \
   --steps 25 \
@@ -119,10 +119,11 @@ def main():
     
     model.to(args.device, dtype=torch.bfloat16).eval()
     vae.model.to(args.device, dtype=torch.bfloat16).eval()
+    vae.scale = [s.to(device=args.device, dtype=torch.bfloat16) for s in vae.scale]
     qwen_model.to(args.device, dtype=torch.bfloat16).eval()
 
-    print("Compiling model...")
-    model = torch.compile(model, mode="default", fullgraph=False, dynamic=True) # "reduce-overhead"
+    #print("Compiling model...")
+    #model = torch.compile(model, mode="default", fullgraph=False, dynamic=True) # "reduce-overhead"
 
     # 3. 初始化数据集 (获取动态分箱结果)
     # 不启用 cache 以便直接读取原始路径信息
@@ -161,7 +162,6 @@ def main():
     # 5. 开始生成循环
     results = []
     gemma3_prompt = config['Model'].get('gemma3_prompt', "")
-    vae_scale = [s.to(device=args.device, dtype=torch.bfloat16) for s in vae.scale] # [scale, shift]
  
     print(f"开始为 {len(target_indices)} 个原始样本生成偏好对池...")
 
@@ -203,11 +203,12 @@ def main():
             scheduler.set_timesteps(args.steps)
                     
             # 2. 初始化噪声
-            latents = torch.randn(batch_size, 16, target_height // 8, target_width // 8, device=args.device, dtype=torch.bfloat16)
+            latents = torch.randn(batch_size, 16, 1, target_height // 8, target_width // 8, device=args.device, dtype=torch.bfloat16)
                     
             # 3. 采样循环
             for t in scheduler.timesteps:
-                t_tensor = torch.full((args.num_samples * 2,), (1.0 - t / 1000.0), device=args.device, dtype=torch.bfloat16)
+                t_val = t / 1000.0
+                t_tensor = torch.full((args.num_samples * 2,), t_val, device=args.device, dtype=torch.bfloat16)
 
                 # Forward
                 v_pred = model(
@@ -221,15 +222,14 @@ def main():
                 # 拆分预测速度 v 并进行 CFG 混合
                 v_uncond, v_cond = v_pred.chunk(2)
                 v_final = v_uncond + args.cfg_scale * (v_cond - v_uncond)
-                # 使用 Scheduler 步进更新噪声，注意取反以适配积分方向
-                latents = scheduler.step(-v_final, t, latents).prev_sample
+                latents = scheduler.step(v_final, t, latents).prev_sample
                 
             # 4. VAE 解码
             with torch.no_grad():
                 decoded = vae.model.decode(latents, vae.scale) 
                 decoded = decoded.squeeze(2) 
                 decoded = (decoded.clamp(-1, 1) + 1) / 2
-                images = decoded.cpu().permute(0, 2, 3, 1).float().numpy()
+                image = decoded.cpu().permute(0, 2, 3, 1).float().numpy()
                 
             # 保存图片
             gen_paths = []
