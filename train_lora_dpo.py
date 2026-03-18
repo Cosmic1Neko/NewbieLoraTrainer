@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Newbie LoRA 训练器 - 基于 Rectified Flow 的 LoRA DPO"""
+"""Anima LoRA 训练器 - 基于 Rectified Flow 的 LoRA DPO"""
 
 import argparse
 import copy
@@ -30,14 +30,15 @@ from safetensors.torch import load_file, save_file
 
 import models
 from dataset import DPODataset, DPOBucketBatchSampler
-from train_newbie_lora import (
+from train_anima_lora import (
     load_model_and_tokenizer,
     setup_scheduler,
     setup_optimizer,
     save_checkpoint,
     save_lora_model,
     load_checkpoint,
-    EMAModel
+    EMAModel,
+    enable_anima_gradient_checkpointing
 )
 from transport import create_transport
 try:
@@ -70,44 +71,39 @@ def collate_fn(batch):
             "cached": False
         }
 
-def compute_loss(model, ref_model, vae, text_encoder, tokenizer, clip_model, clip_tokenizer, transport, batch, device, gemma3_prompt="", beta=1000.0, mu=0.0, dmpo_alpha=0.0):
-    captions = batch["captions"]
-
+def compute_loss(model, ref_model, vae, qwen_model, qwen_tokenizer, t5_tokenizer, transport, batch, device beta=1000.0, mu=0.0, dmpo_alpha=0.0):
     if batch.get("cached", False):
-        latents_chosen = batch["latents_chosen"].to(device)
-        latents_rejected = batch["latents_rejected"].to(device)
+        latents_chosen = batch["latents_chosen"].to(device).unsqueeze(2)
+        latents_rejected = batch["latents_rejected"].to(device).unsqueeze(2)
     else:
+        if vae is None:
+            raise RuntimeError("VAE required for non-cached data")
+        captions = batch["captions"]
         pixel_values_chosen = batch["pixel_values_chosen"].to(device)
         pixel_values_rejected = batch["pixel_values_rejected"].to(device)
-
-        scaling_factor = getattr(vae.config, 'scaling_factor', 0.3611)
-        shift_factor = getattr(vae.config, 'shift_factor', 0.1159)
-
         with torch.no_grad():
-            latents_chosen = vae.encode(pixel_values_chosen).latent_dist.mode()
-            latents_chosen = (latents_chosen - shift_factor) * scaling_factor
-            latents_rejected = vae.encode(pixel_values_rejected).latent_dist.mode()
-            latents_rejected = (latents_rejected - shift_factor) * scaling_factor
+            pixel_values_chosen = pixel_values_chosen.unsqueeze(2).to(dtype=next(vae.model.parameters()).dtype)
+            pixel_values_rejected = pixel_values_rejected.unsqueeze(2).to(dtype=next(vae.model.parameters()).dtype)
+            latents_chosen = vae.model.encode(pixel_values_chosen, vae.scale)
+            latents_rejected = vae.model.encode(latents_rejected, vae.scale)
 
+    bs = latents.shape[0]
+    
     with torch.no_grad():
-        # Gemma 编码
-        gemma_texts = [(gemma3_prompt + cap) if (gemma3_prompt and cap) else cap for cap in captions]
-        gemma_inputs = tokenizer(
-            gemma_texts, padding=True, pad_to_multiple_of=8,
-            truncation=True, max_length=1280, return_tensors="pt"
-        ).to(device)
-        gemma_outputs = text_encoder(**gemma_inputs, output_hidden_states=True)
-        cap_feats = gemma_outputs.hidden_states[-2]
-        cap_mask = gemma_inputs.attention_mask
+        # 处理 Qwen 文本 (提取纯净标签)
+        qwen_texts = [_build_qwen_text_from_prompt(cap) for cap in captions]
+        qwen_embeds, qwen_attn = encode_qwen(qwen_model, qwen_tokenizer, qwen_texts, device)
+        # 处理 T5 文本 (保留权重语法)
+        t5_ids, t5_attn, t5_w = tokenize_t5_weighted(t5_tokenizer, captions, max_length=1024)
+        t5_ids = t5_ids.to(device)
+        # LLMAdapter 桥接
+        unwrapped_model = model.module if hasattr(model, "module") else model
+        cross = unwrapped_model.preprocess_text_embeds(qwen_embeds, t5_ids)
+        if cross.shape[1] < 1024:
+            cross = torch.nn.functional.pad(cross, (0, 0, 0, 1024 - cross.shape[1]))
 
-        # CLIP 编码
-        clip_inputs = clip_tokenizer(
-            captions, padding=True, truncation=True,
-            max_length=2048, return_tensors="pt"
-        ).to(device)
-        clip_text_pooled = clip_model.get_text_features(**clip_inputs)
-
-    model_kwargs = dict(cap_feats=cap_feats, cap_mask=cap_mask, clip_text_pooled=clip_text_pooled)
+    pad_mask = torch.zeros(bs, 1, latents.shape[-2], latents.shape[-1], device=device, dtype=latents.dtype)
+    model_kwargs = dict(crossattn_emb=cross, padding_mask=pad_mask)
 
     ############ 损失计算 ############
     loss = transport.training_dpo_losses(model, ref_model, latents_chosen, latents_rejected, beta, mu, dmpo_alpha, model_kwargs)["loss"].mean()
@@ -182,7 +178,7 @@ def main():
             **config['Optimization']
         }
         accelerator.init_trackers(
-            project_name="Newbie_LoRA_DPO",
+            project_name="Anima_LoRA_DPO",
             config=tracker_config,
             init_kwargs={"wandb": {"name": config['Model'].get('output_name', 'run')}}
         )
@@ -196,11 +192,7 @@ def main():
         os.makedirs(config['Model']['output_dir'], exist_ok=True)
     ####################################################################################################
     # 加载模型
-    model, vae, text_encoder, tokenizer, clip_model, clip_tokenizer = load_model_and_tokenizer(config)
-
-    use_cache = config['Model'].get('use_cache', False)
-    if use_cache and vae is not None:
-        vae = vae.to(accelerator.device)
+    model, vae, qwen_model, qwen_tokenizer, t5_tokenizer, _ = load_model_and_tokenizer(config)
 
     # 应用 LoRA
     sft_lora_path = config['Model'].get('sft_lora_path', "")
@@ -231,6 +223,7 @@ def main():
     
     # 数据加载
     batch_size = config['Model']['train_batch_size']
+    use_cache = config['Model'].get('use_cache', False)
     train_dataset = DPODataset(
         preference_json_path=config['Model']['preference_json'],
         caption_dropout_rate=config['Model'].get('caption_dropout_rate', 0.1), 
@@ -267,7 +260,12 @@ def main():
 
     # 梯度检查点
     if config['Model'].get('gradient_checkpointing', True):
-        model.gradient_checkpointing_enable()
+        unwrapped_model = model
+        if hasattr(unwrapped_model, "base_model"): 
+            unwrapped_model = unwrapped_model.base_model
+        if hasattr(unwrapped_model, "model"):
+            unwrapped_model = unwrapped_model.model
+        enable_anima_gradient_checkpointing(unwrapped_model)
         logger.info("Gradient checkpointing enabled")
 
     # EMA 设置
@@ -278,19 +276,15 @@ def main():
     # accelerator准备模型
     model, optimizer, scheduler = accelerator.prepare(model, optimizer, scheduler)
     ref_model = ReferenceModelWrapper(model, accelerator)
-    
-    if text_encoder is not None:
-        text_encoder = text_encoder.to(accelerator.device)
-        text_encoder.eval()
-        text_encoder.requires_grad_(False)
-    if clip_model is not None:
-        clip_model = clip_model.to(accelerator.device)
-        clip_model.eval()
-        clip_model.requires_grad_(False)
+    if qwen_model is not None:
+        qwen_model = qwen_model.to(accelerator.device)
+        qwen_model.eval()
+        qwen_model.requires_grad_(False)
     if vae is not None:
-        vae = vae.to(accelerator.device)
-        vae.eval()
-        vae.requires_grad_(False)
+        vae.model = vae.model.to(accelerator.device)
+        vae.scale = [s.to(device=accelerator.device, dtype=next(vae.model.parameters()).dtype) for s in vae.scale]
+        vae.model.eval()
+        vae.model.requires_grad_(False)
 
     # 训练检查点
     start_step = load_checkpoint(accelerator, model, optimizer, scheduler, config, ema_model)
@@ -331,6 +325,8 @@ def main():
 
     for epoch in range(start_epoch, config['Model']['num_epochs']):
         epoch_losses = []
+        accumulated_loss = 0.0
+        micro_step_count = 0
         model.train()
         progress_bar = tqdm(
             train_dataloader,
@@ -347,19 +343,19 @@ def main():
                     model, 
                     ref_model,
                     vae, 
-                    text_encoder, 
-                    tokenizer, 
-                    clip_model, 
-                    clip_tokenizer, 
+                    qwen_model,
+                    qwen_tokenizer,
+                    t5_tokenizer,
                     transport, 
                     batch, 
                     accelerator.device, 
-                    config['Model'].get('gemma3_prompt', ''),
                     beta=config['Model']['beta'],
                     mu=config['Model']['mu'],
                     dmpo_alpha=config['Model']['dmpo_alpha'],
                 )
                 epoch_losses.append(loss.item())
+                accumulated_loss += loss.item()
+                micro_step_count += 1
                 accelerator.backward(loss)
                 if accelerator.sync_gradients:
                     if max_grad_norm > 0:
@@ -375,9 +371,10 @@ def main():
             if accelerator.sync_gradients:
                 progress_bar.update(1)
                 global_step += 1
-
+                avg_step_loss = accumulated_loss / max(micro_step_count, 1)
                 if accelerator.is_main_process:
-                    accelerator.log({"loss": loss.item(), "learning_rate": scheduler.get_last_lr()[0]}, step=global_step)
+                    accelerator.log({"loss": avg_step_loss, "learning_rate": scheduler.get_last_lr()[0]}, step=global_step)
+                    
                     elapsed = datetime.now() - start_time
                     steps_in_session = global_step - session_start_step
                     steps_per_sec = steps_in_session / elapsed.total_seconds() if elapsed.total_seconds() > 0 else 0
@@ -390,15 +387,18 @@ def main():
                     elapsed = datetime.now() - start_time
                     steps_in_session = global_step - session_start_step
                     steps_per_sec = steps_in_session / elapsed.total_seconds() if elapsed.total_seconds() > 0 else 0
-                    logger.info(f"Epoch {epoch+1}/{config['Model']['num_epochs']}, Step {global_step}/{num_training_steps}, Loss {loss.item():.4f}, LR {scheduler.get_last_lr()[0]:.7f}, Speed {steps_per_sec:.2f} steps/s")
+                    logger.info(f"Epoch {epoch+1}/{config['Model']['num_epochs']}, Step {global_step}/{num_training_steps}, Loss {avg_step_loss:.4f}, LR {scheduler.get_last_lr()[0]:.7f}, Speed {steps_per_sec:.2f} steps/s")
 
-                if global_step % 1000 == 0:
+                if accelerator.is_main_process and global_step % 1000 == 0:
                     save_checkpoint(accelerator, model, optimizer, scheduler, global_step, config, ema_model)
+
+                accumulated_loss = 0.0
+                micro_step_count = 0
 
         avg_epoch_loss = sum(epoch_losses) / len(epoch_losses) if epoch_losses else 0.0
         logger.info(f"Epoch {epoch+1}/{config['Model']['num_epochs']} completed - Average Loss: {avg_epoch_loss:.4f}")
 
-        if save_epochs_interval == 0 or (epoch + 1) % save_epochs_interval == 0:
+        if accelerator.is_main_process and save_epochs_interval > 0 and (epoch + 1) % save_epochs_interval == 0:
             save_checkpoint(accelerator, model, optimizer, scheduler, global_step, config, ema_model)
             logger.info(f"Checkpoint saved at epoch {epoch+1}")
 
