@@ -753,7 +753,8 @@ def main():
         vae.model.eval()
         vae.model.requires_grad_(False)
     print_memory_usage("After LoRA", args.profiler)
-    
+
+    # 梯度检查点
     if config['Model'].get('gradient_checkpointing', True):
         unwrapped_model = model
         if hasattr(unwrapped_model, "base_model"): 
