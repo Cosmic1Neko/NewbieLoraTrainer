@@ -1,11 +1,11 @@
 """
 python offline_dataset.py \
   --config_file lora.toml \
-  --lora_path /root/autodl-tmp/output/AnimaLoRA_step_1000 \
+  --lora_path /root/autodl-tmp/output/AnimaLoRA-b_step_12434_ema \
   --output_dir /root/autodl-tmp/gen_dataset \
   --num_samples 2 \
-  --steps 25 \
-  --max_data_samples 5000 \
+  --steps 28 \
+  --max_data_samples 2500 \
   --seed 114514
 """
 
@@ -112,10 +112,12 @@ def main():
         from peft import PeftModel
         print(f"Loading LoRA from: {args.lora_path}")
         model = PeftModel.from_pretrained(model, args.lora_path)
+        model = model.merge_and_unload(safe_merge=True)
     else:
         # 只有在路径无效（或想测试未训练的随机初始化 LoRA）时，才手动 setup_lora
         print(f'{args.lora_path} is not a valid PEFT LoRA directory path! Falling back to random init.')
         model = setup_lora(model, config)
+        model = model.merge_and_unload(safe_merge=True)
     
     model.to(args.device, dtype=torch.bfloat16).eval()
     vae.model.to(args.device, dtype=torch.bfloat16).eval()
@@ -135,7 +137,7 @@ def main():
         min_bucket_reso=config['Model'].get('min_bucket_reso', 256),
         max_bucket_reso=config['Model'].get('max_bucket_reso', 2048),
         bucket_reso_step=config['Model'].get('bucket_reso_step', 64),
-        enable_wildcard=False, # 此处先关闭，我们在循环中手动处理 split
+        enable_wildcard=False,
     )
 
     # 确定要处理的样本索引列表
