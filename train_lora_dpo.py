@@ -115,7 +115,7 @@ def compute_loss(model, ref_model, vae, qwen_model, qwen_tokenizer, t5_tokenizer
         if cross.shape[1] < 1024:
             cross = torch.nn.functional.pad(cross, (0, 0, 0, 1024 - cross.shape[1]))
 
-    pad_mask = torch.zeros(bs, 1, latents_chosen.shape[-2], latents_chosen.shape[-1], device=device, dtype=latents.dtype)
+    pad_mask = torch.zeros(bs, 1, latents_chosen.shape[-2], latents_chosen.shape[-1], device=device, dtype=latents_chosen.dtype)
     model_kwargs = dict(crossattn_emb=cross, padding_mask=pad_mask)
 
     ############ 损失计算 ############
