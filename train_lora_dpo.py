@@ -245,12 +245,32 @@ def main():
         device=accelerator.device,
     )
     if use_cache:
-        print("Cache generation complete. Unloading VAE from memory.")
+        # 仅在主进程中实例化带有 VAE 的 Dataset，触发缓存生成
+        if accelerator.is_main_process:
+            logger.info("主进程正在检查并生成 DPO VAE 缓存...")
+            _ = DPODataset(
+                preference_json_path=config['Model']['preference_json'],
+                caption_dropout_rate=config['Model'].get('caption_dropout_rate', 0.1), 
+                real_ratio=config['Model'].get('real_ratio', 0.2), 
+                use_cache=True, 
+                vae=vae, # 传入 VAE 以生成缓存
+                device=accelerator.device,
+            )
+        accelerator.wait_for_everyone()
+        logger.info("缓存生成完毕，从显存中卸载 VAE。")
         del vae
         import gc
         gc.collect()
         torch.cuda.empty_cache()
         vae = None
+    train_dataset = DPODataset(
+        preference_json_path=config['Model']['preference_json'],
+        caption_dropout_rate=config['Model'].get('caption_dropout_rate', 0.1), 
+        real_ratio=config['Model'].get('real_ratio', 0.2), 
+        use_cache=use_cache, 
+        vae=None, # 设置为 None，防止 dataset.py 内部再次触发 _prepare_cache
+        device=accelerator.device,
+    )
     bucket_sampler = DPOBucketBatchSampler(
         train_dataset,
         batch_size=batch_size,
