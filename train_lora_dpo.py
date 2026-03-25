@@ -23,7 +23,6 @@ from PIL import Image
 from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms
 from tqdm.auto import tqdm
-from accelerate.utils import set_seed
 from transformers import AutoTokenizer, AutoModel, AutoConfig
 from peft import LoraConfig, get_peft_model, PeftModel, get_peft_model_state_dict, set_peft_model_state_dict
 from safetensors.torch import load_file, save_file
@@ -301,10 +300,6 @@ def main():
 
     # 训练检查点
     start_step = load_checkpoint(accelerator, model, optimizer, scheduler, config, ema_model)
-    logger.info("Training started")
-    global_step = start_step
-    session_start_step = start_step
-    
     logger.info("Training started")
     global_step = start_step
     session_start_step = start_step
