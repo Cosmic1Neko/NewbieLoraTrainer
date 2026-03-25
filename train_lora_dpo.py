@@ -148,7 +148,7 @@ class ReferenceModelWrapper(torch.nn.Module):
         
         try:
             # 2. 执行前向传播
-            with torch.no_grad()
+            with torch.no_grad():
                 return self.model(*args, **kwargs)
         finally:
             # 3. 恢复
