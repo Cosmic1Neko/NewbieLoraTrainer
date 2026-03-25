@@ -768,8 +768,8 @@ class DPODataset(Dataset):
         rejected_path = dpo_pair.get("rejected")
         caption = item.get("caption", "")
 
-        if item.get("annotation_status") == "swapped":
-            chosen_path, rejected_path = rejected_path, chosen_path
+        #if item.get("annotation_status") == "swapped":
+        #    chosen_path, rejected_path = rejected_path, chosen_path
         
         return chosen_path, rejected_path, caption
 
@@ -844,21 +844,28 @@ class DPOBucketBatchSampler(BucketBatchSampler):
 
         # 对每个 Bucket 生成 Batch
         for resolution, indices in self.bucket_to_indices.items():
-            indices = np.array(indices)
+            indices_tensor = torch.tensor(indices, dtype=torch.long)
             if self.shuffle:
-                # 使用 numpy 或 torch shuffle
-                indices_perm = torch.randperm(len(indices), generator=g).tolist()
-                indices = indices[indices_perm]
+                perm = torch.randperm(len(indices_tensor), generator=g)
+                current_indices = indices_tensor[perm].tolist()
             else:
-                indices = indices.tolist()
+                current_indices = indices_tensor.tolist()
 
             # 切分 batch
-            for i in range(0, len(indices), self.batch_size):
+            for i in range(0, len(current_indices), self.batch_size):
                 batch = indices[i : i + self.batch_size]
-                # 只有当 batch 填满或者是最后一个 bucket 时才保留? 
-                # 这里我们保留所有，collate_fn 会处理
-                # 为了防止 Drop Last 导致数据浪费，这里保留所有片段
-                bucket_batches.append(batch)
+                # 记录面积以便后续排序优化显存
+                area = resolution[0] * resolution[1]
+                bucket_batches.append({"area": area, "batch": batch})
+                
+        # 完善显存优化：第一个 Epoch 按面积从大到小排序，后续 Epoch 打乱
+        if self.shuffle:
+            if self.epoch == 0:
+                bucket_batches.sort(key=lambda x: x["area"], reverse=True)
+            else:
+                # 打乱 Batch 顺序
+                batch_perm = torch.randperm(len(bucket_batches), generator=g).tolist()
+                bucket_batches = [bucket_batches[i] for i in batch_perm]
 
         # 对所有生成的 batch 进行 shuffle (打乱 bucket 顺序)
         if self.shuffle:
@@ -871,14 +878,14 @@ class DPOBucketBatchSampler(BucketBatchSampler):
         # 为了严格对齐，通常会丢弃最后几个无法整除的 batch
         
         num_batches = len(bucket_batches)
-        # 保证总 batch 数能被 replicas 整除 (丢弃多余的)
         num_batches = (num_batches // self.num_replicas) * self.num_replicas
         bucket_batches = bucket_batches[:num_batches]
         
         # 取当前进程的分片
-        indices_iter = bucket_batches[self.rank :: self.num_replicas]
+        local_batches = bucket_batches[self.rank :: self.num_replicas]
         
-        return iter(indices_iter)
+        for entry in local_batches:
+            yield entry["batch"]
 
     def __len__(self):
         total_batches = sum(math.ceil(len(idx) / self.batch_size) for idx in self.bucket_to_indices.values())
