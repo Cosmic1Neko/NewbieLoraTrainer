@@ -28,6 +28,7 @@ from transformers import AutoTokenizer, AutoModel, AutoConfig
 from peft import LoraConfig, get_peft_model, PeftModel, get_peft_model_state_dict, set_peft_model_state_dict
 from safetensors.torch import load_file, save_file
 
+import sys
 sys.path.insert(0, str(Path(__file__).parent))
 sys.path.insert(0, str(Path(__file__).parent / "AnimaLoraToolkit"))
 from anima_train import (
@@ -114,7 +115,7 @@ def compute_loss(model, ref_model, vae, qwen_model, qwen_tokenizer, t5_tokenizer
         if cross.shape[1] < 1024:
             cross = torch.nn.functional.pad(cross, (0, 0, 0, 1024 - cross.shape[1]))
 
-    pad_mask = torch.zeros(bs, 1, latents.shape[-2], latents.shape[-1], device=device, dtype=latents.dtype)
+    pad_mask = torch.zeros(bs, 1, latents_chosen.shape[-2], latents_chosen.shape[-1], device=device, dtype=latents.dtype)
     model_kwargs = dict(crossattn_emb=cross, padding_mask=pad_mask)
 
     ############ 损失计算 ############
