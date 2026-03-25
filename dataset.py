@@ -681,7 +681,7 @@ class DPODataset(Dataset):
                     with torch.no_grad():
                         pixel_values_5d = pixel_values.unsqueeze(2).to(self.dtype)
                         latents = self.vae.model.encode(pixel_values_5d, self.vae.scale)
-                        latents = latents.squeeze(2).squeeze(0)cpu()
+                        latents = latents.squeeze(2).squeeze(0).cpu()
 
                     save_file({
                         "latents": latents,
