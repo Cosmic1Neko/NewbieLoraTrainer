@@ -28,7 +28,19 @@ from transformers import AutoTokenizer, AutoModel, AutoConfig
 from peft import LoraConfig, get_peft_model, PeftModel, get_peft_model_state_dict, set_peft_model_state_dict
 from safetensors.torch import load_file, save_file
 
-import models
+sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, str(Path(__file__).parent / "AnimaLoraToolkit"))
+from anima_train import (
+    load_anima_model,
+    load_vae,
+    load_text_encoders,
+    ensure_models_namespace,
+    _build_qwen_text_from_prompt,
+    encode_qwen,
+    _parse_weighted_tag,
+    tokenize_t5_weighted
+)
+
 from dataset import DPODataset, DPOBucketBatchSampler
 from train_anima_lora import (
     load_model_and_tokenizer,
@@ -71,7 +83,7 @@ def collate_fn(batch):
             "cached": False
         }
 
-def compute_loss(model, ref_model, vae, qwen_model, qwen_tokenizer, t5_tokenizer, transport, batch, device beta=1000.0, mu=0.0, dmpo_alpha=0.0):
+def compute_loss(model, ref_model, vae, qwen_model, qwen_tokenizer, t5_tokenizer, transport, batch, device, beta=1000.0, mu=0.0, dmpo_alpha=0.0):
     if batch.get("cached", False):
         latents_chosen = batch["latents_chosen"].to(device).unsqueeze(2)
         latents_rejected = batch["latents_rejected"].to(device).unsqueeze(2)
@@ -85,9 +97,9 @@ def compute_loss(model, ref_model, vae, qwen_model, qwen_tokenizer, t5_tokenizer
             pixel_values_chosen = pixel_values_chosen.unsqueeze(2).to(dtype=next(vae.model.parameters()).dtype)
             pixel_values_rejected = pixel_values_rejected.unsqueeze(2).to(dtype=next(vae.model.parameters()).dtype)
             latents_chosen = vae.model.encode(pixel_values_chosen, vae.scale)
-            latents_rejected = vae.model.encode(latents_rejected, vae.scale)
+            latents_rejected = vae.model.encode(pixel_values_rejected, vae.scale)
 
-    bs = latents.shape[0]
+    bs = latents_chosen.shape[0]
     
     with torch.no_grad():
         # 处理 Qwen 文本 (提取纯净标签)
