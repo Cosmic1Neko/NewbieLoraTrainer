@@ -148,7 +148,8 @@ class ReferenceModelWrapper(torch.nn.Module):
         
         try:
             # 2. 执行前向传播
-            return self.model(*args, **kwargs)
+            with torch.no_grad()
+                return self.model(*args, **kwargs)
         finally:
             # 3. 恢复
             if was_training:
