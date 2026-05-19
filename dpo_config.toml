@@ -4,8 +4,12 @@
 
 [Model]
 # ---------------- 基础路径配置 ----------------
-# 基础模型路径 (Diffusers 格式)
-base_model_path = "/root/autodl-tmp/Anima"
+# 模型加载路径，填写clip_model、text_encoder、transformer、vae、model_index.json所在的文件夹路径
+anima_repo_root = "/root/NewbieLoraTrainer/AnimaLoraToolkit/models" 
+transformer_path = "/root/autodl-tmp/Anima/anima-preview2.safetensors"
+vae_path = "/root/autodl-tmp/Anima/qwen_image_vae.safetensors"
+qwen_model_path = "/root/autodl-tmp/Anima/qwen_3_06b"
+t5_tokenizer_path = "/root/autodl-tmp/Anima/t5_tokenizer" 
 
 # SFT LoRA 路径 (重要)
 # DPO 通常在 SFT 之后进行。指向你 train_newbie_lora.py 训练出的文件夹
