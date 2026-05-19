@@ -1,5 +1,5 @@
 # =============================================================================
-# Newbie LoRA DPO (Direct Preference Optimization) 配置文件
+# Anima LoRA DPO (Direct Preference Optimization) 配置文件
 # =============================================================================
 
 [Model]
@@ -27,18 +27,18 @@ output_name = "AnimaDPOLoRA"
 wandb_key = ""
 
 # ---------------- 训练参数 ----------------
-# DPO 显存消耗较大，建议 Batch Size = 1
-train_batch_size = 2
-gradient_accumulation_steps = 8
+train_batch_size = 1
+gradient_accumulation_steps = 4
 
-# DPO 训练轮数通常较少
-num_epochs = 10
+num_epochs = 13
 save_epochs_interval = 1
 
 # DPO 学习率通常比 SFT 低一个数量级
 learning_rate = 2e-5  # SFT常用 1e-4，DPO 建议 5e-6 ~ 1e-5
 lr_scheduler = "constant_with_warmup"
 lr_warmup_steps = 200
+
+use_cache = false
 
 # ---------------- DPO 算法参数 (核心) ----------------
 # DPO 正则化强度 (Beta)
