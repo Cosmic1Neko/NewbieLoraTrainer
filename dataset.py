@@ -669,9 +669,23 @@ class DPODataset(Dataset):
             path_to_reso = {}
             for item in self.preference_data:
                 res = tuple(item.get("resolution", [1024, 1024]))
+                # 1. 记录 DPO pair 的路径
                 if item.get("dpo_pair"):
-                    path_to_reso[item["dpo_pair"]["chosen"]] = res
-                    path_to_reso[item["dpo_pair"]["rejected"]] = res
+                    if item["dpo_pair"].get("chosen"):
+                        path_to_reso[item["dpo_pair"]["chosen"]] = res
+                    if item["dpo_pair"].get("rejected"):
+                        path_to_reso[item["dpo_pair"]["rejected"]] = res
+                
+                # 同时记录真实/正则化图片 (real_image / generated_images) 的路径
+                if item.get("real_image_path"):
+                    path_to_reso[item["real_image_path"]] = res
+                    
+                gen_paths = item.get("generated_image_paths")
+                if isinstance(gen_paths, list):
+                    for p in gen_paths:
+                        path_to_reso[p] = res
+                elif isinstance(gen_paths, str):
+                    path_to_reso[gen_paths] = res
             
             for path in tqdm(missing_paths, desc="Caching DPO"):
                 try:
@@ -785,7 +799,7 @@ class DPODataset(Dataset):
 
         if use_real_regularization:
             chosen_path, rejected_path, caption = self._get_real_pair(target_reso)
-        if chosen_path is None:
+        if chosen_path is None or rejected_path is None:
             chosen_path, rejected_path, caption = self._get_preference_pair(idx)
         # Caption Dropout
         if random.random() < self.caption_dropout_rate:
@@ -853,7 +867,7 @@ class DPOBucketBatchSampler(BucketBatchSampler):
 
             # 切分 batch
             for i in range(0, len(current_indices), self.batch_size):
-                batch = indices[i : i + self.batch_size]
+                batch = current_indices[i : i + self.batch_size]
                 # 记录面积以便后续排序优化显存
                 area = resolution[0] * resolution[1]
                 bucket_batches.append({"area": area, "batch": batch})
