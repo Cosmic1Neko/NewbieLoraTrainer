@@ -593,6 +593,11 @@ class DPODataset(Dataset):
         with open(preference_json_path, 'r', encoding='utf-8') as f:
             raw_data = json.load(f)
         
+        self.real_reg_data = [
+            item for item in raw_data
+            if item.get("real_image_path") and item.get("generated_image_paths")
+        ]
+
         self.all_data = [
             item for item in raw_data
             if item.get("annotation_status") in ["swapped", "confirmed"]
@@ -601,11 +606,6 @@ class DPODataset(Dataset):
         self.preference_data = [
             item for item in self.all_data 
             if item.get("dpo_pair") and item.get("dpo_pair", {}).get("chosen") and item.get("dpo_pair", {}).get("rejected")
-        ]
-        
-        self.real_reg_data = [
-            item for item in self.preference_data
-            if item.get("real_image_path") and item.get("generated_image_paths")
         ]
         
         print(f"Dataset loaded from {preference_json_path}")
@@ -676,7 +676,7 @@ class DPODataset(Dataset):
             
             # 建立 path -> resolution 映射
             path_to_reso = {}
-            for item in self.preference_data:
+            for item in self.preference_data + self.real_reg_data:
                 res = tuple(item.get("resolution", [1024, 1024]))
                 # 1. 记录 DPO pair 的路径
                 if item.get("dpo_pair"):
