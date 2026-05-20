@@ -564,6 +564,7 @@ class DPODataset(Dataset):
         self.use_cache = use_cache
         self.vae = vae
         self.device = device
+        self.dtype = dtype
         
         # 加载偏好对数据
         # 预期格式示例: 
