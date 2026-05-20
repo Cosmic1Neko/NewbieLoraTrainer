@@ -153,6 +153,10 @@ class ImageCaptionDataset(Dataset):
             #self.text_encoder.eval().to(self.device)
             #self.clip_model.eval().to(self.device)
 
+            vae_dtype = next(self.vae.model.parameters()).dtype
+            if hasattr(self.vae, 'scale'):
+                self.vae.scale = [s.to(device=self.device, dtype=vae_dtype) for s in self.vae.scale]
+
             with torch.no_grad():
                 for idx in tqdm(missing_indices, desc="Caching"):
                     image_path = self.image_paths[idx]
@@ -665,6 +669,10 @@ class DPODataset(Dataset):
         if missing_paths:
             logger.info(f"Generating {len(missing_paths)} cache files for DPO...")
             self.vae.model.eval().to(self.device)
+
+            vae_dtype = next(self.vae.model.parameters()).dtype
+            if hasattr(self.vae, 'scale'):
+                self.vae.scale = [s.to(device=self.device, dtype=vae_dtype) for s in self.vae.scale]
             
             # 建立 path -> resolution 映射
             path_to_reso = {}
@@ -694,7 +702,8 @@ class DPODataset(Dataset):
                     pixel_values = self.load_image(path, target_height, target_width).unsqueeze(0).to(self.device)
                     
                     with torch.no_grad():
-                        pixel_values_5d = pixel_values.unsqueeze(2).to(self.dtype)
+                        vae_dtype = next(self.vae.model.parameters()).dtype
+                        pixel_values_5d = pixel_values.unsqueeze(2).to(vae_dtype)
                         latents = self.vae.model.encode(pixel_values_5d, self.vae.scale)
                         latents = latents.squeeze(2).squeeze(0).cpu()
 
