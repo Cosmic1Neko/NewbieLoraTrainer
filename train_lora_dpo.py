@@ -84,6 +84,7 @@ def collate_fn(batch):
         }
 
 def compute_loss(model, ref_model, vae, qwen_model, qwen_tokenizer, t5_tokenizer, transport, batch, device, beta=1000.0, mu=0.0, dmpo_alpha=0.0):
+    captions = batch["captions"]
     if batch.get("cached", False):
         latents_chosen = batch["latents_chosen"].to(device).unsqueeze(2)
         latents_rejected = batch["latents_rejected"].to(device).unsqueeze(2)
