@@ -121,7 +121,7 @@ class Transport:
 
         if self.do_shift:
             base_shift: float = 0.5
-            max_shift: float = 3.0
+            max_shift: float = 1.15
             if isinstance(x1, (list, tuple)):
                 h, w = x1[0].shape[-2:]
             else:
@@ -302,6 +302,8 @@ class Transport:
         ref_w_err = mean_flat((ref_w_pred - ut_w) ** 2)
         ref_l_err = mean_flat((ref_l_pred - ut_l) ** 2)
 
+        mean_lam = th.tensor(1.0, device=model_w_pred.device, dtype=model_w_pred.dtype)
+
         # 5. SDPO
         # 核心原理：通过缩放败者分支的梯度贡献，确保更新不会导致胜者损失在一阶近似下增加。
         if mu > 0:
@@ -320,6 +322,7 @@ class Transport:
             )
             # 限制 λ 在 [0, 1.0] 范围内以保证稳定性
             lam = lam.clamp(min=0.0, max=1.0).detach()
+            mean_lam = lam
             
             # 使用 λ 缩放败者分支的损失贡献
             model_l_err_final = model_l_err.detach() + lam * (model_l_err - model_l_err.detach())
@@ -356,6 +359,7 @@ class Transport:
             "model_w_mse": model_w_err.detach().mean(),
             "model_l_mse": model_l_err.detach().mean(),
             "inside_term": inside_term.detach().mean(),
+            "lam": mean_lam,
             "t": t
         }
         return terms
