@@ -119,7 +119,7 @@ def compute_loss(model, ref_model, vae, qwen_model, qwen_tokenizer, t5_tokenizer
     model_kwargs = dict(crossattn_emb=cross, padding_mask=pad_mask)
 
     ############ 损失计算 ############
-    terms = transport.training_dpo_losses(model, ref_model, latents_chosen, latents_rejected, beta, mu, dmpo_alpha, model_kwargs)["loss"].mean()
+    terms = transport.training_dpo_losses(model, ref_model, latents_chosen, latents_rejected, beta, mu, dmpo_alpha, model_kwargs)
     loss = terms["loss"].mean()
     lam = terms.get("lam", torch.tensor(1.0)).mean()
 
@@ -378,7 +378,7 @@ def main():
                 continue
 
             with accelerator.accumulate(model):
-                loss = compute_loss(
+                loss, lam = compute_loss(
                     model, 
                     ref_model,
                     vae, 
@@ -421,7 +421,7 @@ def main():
                     steps_per_sec = steps_in_session / elapsed.total_seconds() if elapsed.total_seconds() > 0 else 0
                     progress_bar.set_postfix({
                         'loss': f'{loss.item():.4f}',
-                        'scale': f'{lam.item():.3f}',
+                        'scale': f'{lam.item():.4f}',
                         'lr': f'{scheduler.get_last_lr()[0]:.2e}',
                         'speed': f'{steps_per_sec:.2f} steps/s'
                     })
