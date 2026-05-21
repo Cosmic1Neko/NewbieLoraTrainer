@@ -119,9 +119,11 @@ def compute_loss(model, ref_model, vae, qwen_model, qwen_tokenizer, t5_tokenizer
     model_kwargs = dict(crossattn_emb=cross, padding_mask=pad_mask)
 
     ############ 损失计算 ############
-    loss = transport.training_dpo_losses(model, ref_model, latents_chosen, latents_rejected, beta, mu, dmpo_alpha, model_kwargs)["loss"].mean()
+    terms = transport.training_dpo_losses(model, ref_model, latents_chosen, latents_rejected, beta, mu, dmpo_alpha, model_kwargs)["loss"].mean()
+    loss = terms["loss"].mean()
+    lam = terms.get("lam", torch.tensor(1.0)).mean()
 
-    return loss
+    return loss, lam
 
 class ReferenceModelWrapper(torch.nn.Module):
     """
@@ -362,6 +364,7 @@ def main():
     for epoch in range(start_epoch, config['Model']['num_epochs']):
         epoch_losses = []
         accumulated_loss = 0.0
+        accumulated_lam = 0.0
         micro_step_count = 0
         model.train()
         progress_bar = tqdm(
@@ -391,6 +394,7 @@ def main():
                 )
                 epoch_losses.append(loss.item())
                 accumulated_loss += loss.item()
+                accumulated_lam += lam.item()
                 micro_step_count += 1
                 accelerator.backward(loss)
                 if accelerator.sync_gradients:
@@ -408,14 +412,16 @@ def main():
                 progress_bar.update(1)
                 global_step += 1
                 avg_step_loss = accumulated_loss / max(micro_step_count, 1)
+                avg_step_lam = accumulated_lam / max(micro_step_count, 1)
                 if accelerator.is_main_process:
-                    accelerator.log({"loss": avg_step_loss, "learning_rate": scheduler.get_last_lr()[0]}, step=global_step)
+                    accelerator.log({"loss": avg_step_loss, "lose_l_scale": avg_step_lam, "learning_rate": scheduler.get_last_lr()[0]}, step=global_step)
                     
                     elapsed = datetime.now() - start_time
                     steps_in_session = global_step - session_start_step
                     steps_per_sec = steps_in_session / elapsed.total_seconds() if elapsed.total_seconds() > 0 else 0
                     progress_bar.set_postfix({
                         'loss': f'{loss.item():.4f}',
+                        'scale': f'{lam.item():.3f}',
                         'lr': f'{scheduler.get_last_lr()[0]:.2e}',
                         'speed': f'{steps_per_sec:.2f} steps/s'
                     })
@@ -429,6 +435,7 @@ def main():
                     save_checkpoint(accelerator, model, optimizer, scheduler, global_step, config, ema_model)
 
                 accumulated_loss = 0.0
+                accumulated_lam = 0.0
                 micro_step_count = 0
 
         avg_epoch_loss = sum(epoch_losses) / len(epoch_losses) if epoch_losses else 0.0
